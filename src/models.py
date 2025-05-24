@@ -33,7 +33,7 @@ class ConvBNAct(nn.Module):
         layers = [nn.LazyConv2d(out_channels, kernel_size, stride, padding)]
         
         if include_bn:
-            layers.append(nn.BatchNorm2d(out_channels))
+            layers.append(nn.LazyBatchNorm2d(out_channels))
             
         if activation:
             layers.append(activation)
@@ -98,8 +98,7 @@ class YOLOv1(nn.Module):
         self.num_channels = B * 5 + C
         
         self.backbone = backbone
-        self.detector = YOLOv1Detector(S, B, C, 
-                                       drop_prob, include_bn)
+        self.detector = YOLOv1Detector(S, B, C,  drop_prob, include_bn)
     
     def forward(self, X: torch.Tensor):
         '''

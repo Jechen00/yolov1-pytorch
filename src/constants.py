@@ -37,8 +37,8 @@ VOC_IDS = {cls: idx for idx, cls in enumerate(VOC_CLASSES)}
 # List format: [display_name, display_color]
 VOC_PLOT_DISPLAYS = {
     'person': ['Person', '#E24A33'],
-    'bird': ['Bird', '#7A5195'],
-    'cat': ['Cat', '#988ED5'],
+    'bird': ['Bird', "#46E7B6"],
+    'cat': ['Cat', "#5744D6"],
     'cow': ['Cow', '#FF7F0E'],
     'dog': ['Dog', '#FBC15E'],
     'horse': ['Horse', '#7F3C8D'],
@@ -47,13 +47,13 @@ VOC_PLOT_DISPLAYS = {
     'bicycle': ['Bicycle', '#A60628'],
     'boat': ['Boat', '#1F77B4'],
     'bus': ['Bus', '#FF9896'],
-    'car': ['Car', '#2CA02C'],
+    'car': ['Car', "#27C827"],
     'motorbike': ['Motorcycle', '#9467BD'],
     'train': ['Train', '#BCBD22'],
-    'bottle': ['Bottle', '#D95F02'],
+    'bottle': ['Bottle', "#40E389"],
     'chair': ['Chair', '#C49C94'],
     'diningtable': ['Dining Table', '#1B9E77'],
     'pottedplant': ['Potted Plant', '#E7298A'],
     'sofa': ['Sofa', '#FFBB78'],
-    'tvmonitor': ['TV/Monitor', '#AEC7E8']
+    'tvmonitor': ['TV/Monitor', "#649DE8"]
 }
