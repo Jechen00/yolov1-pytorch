@@ -33,7 +33,7 @@ class ConvBNAct(nn.Module):
         layers = [nn.LazyConv2d(out_channels, kernel_size, stride, padding)]
         
         if include_bn:
-            layers.append(nn.LazyBatchNorm2d(out_channels))
+            layers.append(nn.LazyBatchNorm2d())
             
         if activation:
             layers.append(activation)

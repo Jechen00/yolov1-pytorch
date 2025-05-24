@@ -52,7 +52,10 @@ def draw_bboxes(img: Image.Image,
     ax.imshow(img.resize(img_resize)) # Plot resized image
     
     bbox_lw = 2.5
-    for bbox, label_idx, score in zip(bboxes, labels, scores):
+    
+    for i in range(len(bboxes)):
+        bbox = bboxes[i]
+        label_idx = labels[i]
         name, clr = VOC_PLOT_DISPLAYS[VOC_CLASSES[label_idx]]
         
         xmin, ymin, xmax, ymax = bbox
@@ -68,7 +71,7 @@ def draw_bboxes(img: Image.Image,
         ax.add_patch(rect)
         
         if show_scores:
-            txt = f'{name} \n Score: {score:.2f}'
+            txt = f'{name} \n Score: {scores[i]:.2f}'
         else:
             txt = f'{name}'
             
@@ -79,4 +82,6 @@ def draw_bboxes(img: Image.Image,
                  bbox = dict(facecolor = clr, alpha = 0.8, pad = 1.8, edgecolor = 'none'))
         
     ax.axis(False)
+    plt.close(fig)
+    
     return fig
