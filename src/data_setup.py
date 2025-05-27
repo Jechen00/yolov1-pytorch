@@ -223,7 +223,7 @@ class VOCDataset(Dataset):
             
             # Check if VOC dataset directory exists, if not download it
             if not os.path.exists(paths['dataset']):
-                print(f'{BOLD_START}[DOWNLOADING]{BOLD_END} Dataset VOC{key} to {paths['dataset']}')
+                print(f"{BOLD_START}[DOWNLOADING]{BOLD_END} Dataset VOC{key} to {paths['dataset']}")
                 download_and_extract_archive(url = VOC_DATA[key]['url'],
                                              download_root = root, 
                                              filename = VOC_DATA[key]['filename'],
@@ -246,7 +246,7 @@ class VOCDataset(Dataset):
             self.voc_annotations += annotations
         
         if max_imgs is not None:
-            assert max_imgs > 0, 'Must have max_imgs > 0'
+            assert max_imgs > 0, 'Must have `max_imgs` > 0'
 
             samp_idxs = random.sample(range(self.__len__()), max_imgs)
             self.voc_imgs = [self.voc_imgs[i] for i in samp_idxs]

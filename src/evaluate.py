@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from torchvision.ops import batched_nms
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
 
-from typing import List, Union
+from typing import List, Union, Optional
 
 from src import postprocess
 from src.utils import convert
@@ -79,9 +79,9 @@ def calc_ious(pred_bboxes: torch.Tensor, targ_bboxes: torch.Tensor) -> torch.Ten
 # ----------------------------
 # Mean Average Precision
 # ----------------------------
-def calc_mAP(pred_dicts: List[dict], 
+def calc_map(pred_dicts: List[dict], 
              targ_dicts: List[dict], 
-             thresholds: List[float] = [0.5]):
+             thresholds: Optional[List[float]] = None) -> dict:
     '''
     Computes the mean Average Precision (mAP) metric across IoU thresholds, 
     given a list of prediction and target dictionaries.
@@ -106,7 +106,8 @@ def calc_mAP(pred_dicts: List[dict],
                                                             Shape is (num_objects, 4).
                                     - labels (torch.Tensor): The class labels for the bounding boxes in `bboxes`.
                                                              Shape is (num_objects,).
-        thresholds (List[float]): A list of IoU thresholds used for mAP calculations. Default is [0.5].
+        thresholds (optional, List[float]): A list of IoU thresholds used for mAP calculations.
+                                            If not provided, this defaults to [0.5].
 
     Returns:
         mAP_dict (dict): A dictionary containing the calculated mAP values.
@@ -121,6 +122,8 @@ def calc_mAP(pred_dicts: List[dict],
     mAP references: 
         - https://wiki.cloudfactory.com/docs/mp-wiki/metrics/map-mean-average-precision
     '''
+    thresholds = [0.5] if thresholds is None else thresholds
+
     targ_labels, pred_labels, pred_bboxes, pred_scores, pred_img_idxs = [], [], [], [], []
     device = targ_dicts[0]['boxes'].device
 
@@ -147,7 +150,7 @@ def calc_mAP(pred_dicts: List[dict],
     unique_targ_labels = torch.unique(targ_labels)
     
     # Lists to keep track of class-wise APs and common mAP@ values
-    label_APs, mAP_50_APs, mAP_75_APs = [], [], []
+    label_APs, map_50_APs, map_75_APs = [], [], []
 
     # Calculate AP for all unqiue target class labels
     for label in unique_targ_labels:
@@ -214,29 +217,29 @@ def calc_mAP(pred_dicts: List[dict],
             threshold_APs.append(ap)
             
             if threshold == 0.5:
-                mAP_50_APs.append(ap)
+                map_50_APs.append(ap)
             elif threshold == 0.75:
-                mAP_75_APs.append(ap)
+                map_75_APs.append(ap)
                 
         # Average AP across thresholds
         label_APs.append(sum(threshold_APs) / len(threshold_APs))
     
-    mAP_dict = {
-        'mAP': torch.tensor(label_APs).mean(),
-        'mAP_50': torch.tensor(mAP_50_APs).mean() if mAP_50_APs else torch.nan,
-        'mAP_75': torch.tensor(mAP_75_APs).mean() if mAP_75_APs else torch.nan,
+    map_dict = {
+        'map': torch.tensor(label_APs).mean(),
+        'map_50': torch.tensor(map_50_APs).mean() if map_50_APs else torch.nan,
+        'map_75': torch.tensor(map_75_APs).mean() if map_75_APs else torch.nan,
         'label_APs': torch.tensor(label_APs),
         'targ_labels': unique_targ_labels
     }
         
-    return mAP_dict
+    return map_dict
 
-def calc_dataset_mAP(model: nn.Module, 
+def calc_dataset_map(model: nn.Module, 
                      dataloader: DataLoader, 
                      obj_threshold: float = 0.25,
                      nms_threshold: float = 0.5,
-                     mAP_thresholds: List[float] = [0.5],
-                     device: Union[torch.device, str] = 'cpu'):
+                     map_thresholds: Optional[List[float]] = None,
+                     device: Union[torch.device, str] = 'cpu') -> dict:
     '''
     Evaluates a YOLOv1 model on a given dataset using the MeanAveragePrecision metric
     from `torchmetrics.detection`. 
@@ -248,7 +251,8 @@ def calc_dataset_mAP(model: nn.Module,
         dataloader (data.Dataloader): The dataloader used to transform and load the dataset in batches.
         obj_threshold (float): Threshold to filter out low predicted object confidence scores. Default is 0.25.
         nms_threshold (float): The IoU threshold used when performing Non-Maximum Suppression (NMS). Default is 0.5.
-        mAP_thresholds (List[float]): A list of IoU thresholds used for mAP calculations. Default is [0.5].
+        map_thresholds (optional, List[float]): A list of IoU thresholds used for mAP calculations.
+                                                If not provided, this defaults to [0.5].
         device (torch.device or str): The device to perform calculations on. Default is 'cpu'.
     
     Returns:
@@ -262,9 +266,11 @@ def calc_dataset_mAP(model: nn.Module,
               For more information, see:
                 https://lightning.ai/docs/torchmetrics/stable/detection/mean_average_precision.html
     '''
-    mAP = MeanAveragePrecision(box_format = 'xyxy', 
+    map_thresholds = [0.5] if map_thresholds is None else map_thresholds
+
+    map = MeanAveragePrecision(box_format = 'xyxy', 
                                class_metrics = True, 
-                               iou_thresholds = mAP_thresholds)
+                               iou_thresholds = map_thresholds)
     model.eval()
     for imgs, targs in dataloader:
         imgs, targs = imgs.to(device), targs.to(device)
@@ -274,20 +280,18 @@ def calc_dataset_mAP(model: nn.Module,
         with torch.inference_mode():
             pred_dicts = predict_yolov1(model, imgs, obj_threshold, nms_threshold)
 
-        mAP.update(pred_dicts, targ_dicts)
+        map.update(pred_dicts, targ_dicts)
 
-    return mAP.compute()
+    return map.compute()
 
 
 # ----------------------------
 # Prediction
 # ----------------------------
-def predict_yolov1(
-        model: nn.Module, 
-        X: torch.Tensor, 
-        obj_threshold: float = 0.25,
-        nms_threshold: float = 0.5
-    ) -> List[dict]:
+def predict_yolov1(model: nn.Module, 
+                   X: torch.Tensor, 
+                   obj_threshold: float = 0.25,
+                   nms_threshold: float = 0.5) -> List[dict]:
     '''
     Uses a YOLOv1 model to predicted the bounding boxes and class labels for a batch of preprocessed images.
     The predictions are first filtered by object confidence score and then filtered by Non-Maximum Suppression (NMS).
@@ -315,7 +319,7 @@ def predict_yolov1(
                                                              Shape is (num_filtered_bboxes,)
     '''
     assert len(X.shape) == 4, (
-        'Incorrect number of dimensions for X. Expecting shape (batch_size, channels, height, width).'
+        'Incorrect number of dimensions for `X`. Expecting shape (batch_size, channels, height, width).'
     )
 
     device = X.device

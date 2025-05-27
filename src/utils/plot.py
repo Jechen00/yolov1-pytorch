@@ -44,7 +44,7 @@ def draw_bboxes(img: Image.Image,
         fig (Figure): A matplotlib figure with the plotted image and bounding boxes.
     '''
     if show_scores:
-        assert scores is not None, 'A tensor of scores is required if show_scores is set to True.'
+        assert scores is not None, 'A tensor of `scores` is required if `show_scores` is set to True.'
 
     fig = plt.figure(**kwargs)
     ax = plt.gca()
@@ -83,5 +83,5 @@ def draw_bboxes(img: Image.Image,
         
     ax.axis(False)
     plt.close(fig)
-    
+
     return fig

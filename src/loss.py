@@ -17,11 +17,18 @@ class YOLOv1Loss(nn.Module):
     Reference: https://www.cv-foundation.org/openaccess/content_cvpr_2016/papers/Redmon_You_Only_Look_CVPR_2016_paper.pdf
     '''
     def __init__(self, S: int = 7, B: int = 2, C: int = 20,
-                 lambda_coord: float = 5, lambda_noobj: float = 0.5):
+                 lambda_coord: float = 5, lambda_noobj: float = 0.5,
+                 reduction: str = 'mean'):
+        '''
+        reduction ('sum' or 'mean'): Reduction method for the losses over batch samples.
+                                     If 'sum' the losses are added. If 'mean', the losses are averaged.
+                                     Default is 'mean'.
+        '''
         super().__init__()
         self.S, self.B, self.C = S, B, C
         self.lambda_coord, self.lambda_noobj = lambda_coord, lambda_noobj
-    
+        self.reduction = reduction
+
     def class_loss(self, 
                    preds: torch.Tensor, 
                    targs: torch.Tensor, 
@@ -88,8 +95,8 @@ class YOLOv1Loss(nn.Module):
         targs shape: (batch_size, S, S, B*5 + C)
         '''
 
-        assert not torch.isnan(preds).any(), 'NaNs in preds'
-        assert not torch.isnan(targs).any(), 'NaNs in targs'
+        assert not torch.isnan(preds).any(), 'NaNs in `preds`'
+        assert not torch.isnan(targs).any(), 'NaNs in `targs`'
 
         device = targs.device
 
@@ -139,12 +146,12 @@ class YOLOv1Loss(nn.Module):
             'local': local_loss,
             'obj_conf': obj_conf_loss,
             'noobj_conf': noobj_conf_loss,
+            'total': tot_loss
         }
 
-        # Divide by batch size to get mean
-        for key in loss_dict:
-            loss_dict[key] = loss_dict[key].detach().item() / batch_size
-
-        loss_dict['total'] = tot_loss / batch_size # Not detached b/c will be used for backpropagation
+        if self.reduction == 'mean':
+            # Divide by batch size to get mean
+            for key in loss_dict:
+                loss_dict[key] = loss_dict[key] / batch_size
 
         return loss_dict
