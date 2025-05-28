@@ -34,36 +34,20 @@ def set_seed(seed: int = 0):
     torch.use_deterministic_algorithms(True)
     os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 
-def get_save_path(save_dir: Optional[str] = None, 
-                  checkpoint_name: Optional[str] = None) -> Optional[str]:
-    match (save_dir, checkpoint_name):
-        case (None, None):
-            return None # No saving needed
+def calc_grad_norm(model: nn.Module, order: int = 2):
+    '''
+    Computes the global gradient norm over all parameters of a model.
 
-        case (str(), str()):
-            # Add .pth if checkpoint_name doesn't end with .pth or .pts
-            if not checkpoint_name.endswith(('.pth', '.pt')):
-                checkpoint_name += '.pth'
-            return os.path.join(save_dir, checkpoint_name)
-        
-        case (str(), None):
-            # Set a default file name for saved checkpoint
-            return os.path.join(save_dir, 'checkpoint.pth')
-        
-        case (None, str()):
-            raise ValueError('`save_dir` must be a specified string if `checkpoint_name` is given.')
-        
-
-
-    if (save_dir is None) and (checkpoint_name is None):
-        return None
-    if save_dir is None:
-        raise ValueError('`save_dir` must be specified if `checkpoint_name` is given.')
-    if checkpoint_name is None:
-        checkpoint_name = 'checkpoint.pth'
-    if not checkpoint_name.endswith(('.pth', '.pt')):
-        checkpoint_name += '.pth'
-    return os.path.join(save_dir, checkpoint_name)
+    model (nn.Module): A PyTorch model.
+    order (int): The of the norm. Default is 2 for the L2 norm.
+    '''
+    global_norm = 0
+    for param in model.parameters():
+        if param.grad is not None:
+            param_norm = param.grad.data.norm(order)
+            global_norm += param_norm.item()**order
+            
+    return global_norm**(1/order)
 
 def save_checkpoint(model: nn.Module, 
                     optimizer: Optimizer, 

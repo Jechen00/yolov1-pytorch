@@ -27,15 +27,16 @@ def draw_bboxes(img: Image.Image,
 
     Args:
         img (Image.Image): The PIL image to plot.
-        bboxes (torch.Tensor): A tensor of bounding boxes in (x_min, y_min, x_max, y_max) format. 
-                            Shape is (num_bboxes, 4).
+        bboxes (torch.Tensor): A tensor of bounding boxes in (x_min, y_min, x_max, y_max) format.
+                               (x_min, y_min, x_max, y_max) should be on the same scale as `img_resize`.
+                               Shape is (num_bboxes, 4).
         labels (torch.Tensor): A tensor of class labels for the bounding boxes in `bboxes`.
-                            Shape is (num_bboxes,).
+                               Shape is (num_bboxes,).
         scores (optional, torch.Tensor): A tensor of class confidence scores for the bounding boxes in `bboxes`.
-                                        This is optional, but required if `show_scores` is True. Shape is (num_bboxes,).
+                                         This is optional, but required if `show_scores` is True. Shape is (num_bboxes,).
         img_resize (Tuple[int, int]): A tuple indicating what the PIL image should be resized to (width, height). 
-                                    This should be the same scale that the bbox coordinates are set to. 
-                                    Default is (448, 448) for YOLOv1.
+                                      This should be the same scale that the bbox coordinates are set to. 
+                                      Default is (448, 448) for YOLOv1.
         show_scores (bool): Determines if class confidence scores should be plotting along with the labels and bounding boxes.
                             If True, the `scores` argument is required. Default is False.
         **kwargs: Additional keyword arguments passed to `matplotlib.pyplot.figure`.
@@ -45,6 +46,11 @@ def draw_bboxes(img: Image.Image,
     '''
     if show_scores:
         assert scores is not None, 'A tensor of `scores` is required if `show_scores` is set to True.'
+        scores = scores.cpu() # Send tensors to CPU, just in case they weren't there already
+
+    # Send tensors to CPU, just in case they weren't there already
+    bboxes = bboxes.cpu()
+    labels = labels.cpu()
 
     fig = plt.figure(**kwargs)
     ax = plt.gca()

@@ -1,6 +1,8 @@
 #####################################
 # Imports & Dependencies
 #####################################
+from __future__ import annotations
+
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -71,7 +73,9 @@ def yolov1_train_step(model: nn.Module,
         # Clip gradients if necessary
         if clip_grads:
             nn.utils.clip_grad_norm_(model.parameters(), max_norm = max_norm)
-        
+
+        # print(f'[BATCH {i}, GRADIENT]: {misc.calc_grad_norm(model, order = 2)}')
+
         for key in loss_sums:
             # Multiplying by batch_size gives 'sum' reduction
             loss_sums[key] += loss_dict[key].detach() * batch_size
@@ -87,43 +91,29 @@ def yolov1_train_step(model: nn.Module,
 
 
 def train(model: nn.Module,
-          train_loader: DataLoader, test_loader: DataLoader, 
-          loss_fn: nn.Module, optimizer: Optimizer, 
+          train_loader: DataLoader, 
+          test_loader: DataLoader, 
+          loss_fn: nn.Module, 
+          optimizer: Optimizer, 
           scheduler: lr_scheduler._LRScheduler, 
-          num_epochs: int, 
-          accum_steps: int = 1, clip_grads: bool = False, max_norm: float = 1.0,
-          eval_intervals: Optional[int] = None,
-          obj_threshold: float = 0.2, nms_threshold: float = 0.5, 
-          map_thresholds: Optional[List[float]] = None, 
-          device: Union[str, torch.device] = 'cpu', 
-          save_dir: Optional[str] = None, checkpoint_name: Optional[str] = None, 
-          ignore_exists: bool = False,
-          resume_path: Optional[str] = None, resume = False) -> Tuple[dict, dict]:
+          te_cfgs: TrainEvalConfigs,
+          ckpt_cfgs: CheckpointConfigs,
+          device: Union[str, torch.device] = 'cpu') -> Tuple[dict, dict]:
     
     # -------------------------
     # Setup & Initialization
     # -------------------------
     start_logs = [] # Log messages to print prior to training/evaluation
 
-    # Get save_path if checkpoints should be saved every epoch
-    save_path = misc.get_save_path(save_dir, checkpoint_name)
-    if save_path is not None:
+    if ckpt_cfgs.save_path is not None:
         start_logs.append(
             f'{constants.BOLD_START}[NOTE]{constants.BOLD_END} ' 
-            f'Checkpoints will be saved to {save_path}.'
+            f'Checkpoints will be saved to {ckpt_cfgs.save_path}.'
         )
     
     # Load in previous checkpoint if resuming training
-    if resume:
-        if resume_path is None:
-            assert save_path is not None, (
-                'Cannot resume training. Neither `resume_path` is provided, '
-                'nor both `save_dir` and `checkpoint_name`.'
-            )
-            # Use save_path as resume_path if none was provided explicitly
-            resume_path = save_path
-            
-        checkpoint = torch.load(resume_path, map_location = device)
+    if ckpt_cfgs.resume:
+        checkpoint = torch.load(ckpt_cfgs.resume_path, map_location = device)
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['scheduler'])
@@ -134,18 +124,11 @@ def train(model: nn.Module,
             
         start_logs.append(
             f'{constants.BOLD_START}[NOTE]{constants.BOLD_END} '
-            f'Successfully loaded past checkpoint at {resume_path}. '
+            f'Successfully loaded previous checkpoint at {ckpt_cfgs.resume_path}. '
             f'Resuming training from epoch {last_epoch + 1}.'
         )
 
     else:
-        if save_path is not None:
-            if os.path.exists(save_path) and (not ignore_exists):
-                raise FileExistsError(
-                    f'A file already exists at `save_path`: {save_path}, but `resume = False`.\n'
-                    f'To allow overwriting this file and start training from scratch, set `ignore_exists = True`.'
-                )
-
         last_epoch = -1
         epoch_losses = {
             'total': [],
@@ -158,10 +141,10 @@ def train(model: nn.Module,
     
     for log in start_logs:
         print(log)
-    print()  # Adds a blank line before training/evaluation logs
+    print()  # Add a blank line before training/evaluation logs
 
     # Start of training and evaluation
-    for epoch in range(last_epoch + 1, num_epochs):
+    for epoch in range(last_epoch + 1, te_cfgs.num_epochs):
         epoch_logs = [] # Log messages for the epoch
         
         # -------------------------
@@ -173,8 +156,10 @@ def train(model: nn.Module,
             # This returns a dictionary where the values are already floats
         avg_losses = engine.yolov1_train_step(model = model, dataloader = train_loader, 
                                               loss_fn = loss_fn, optimizer = optimizer, 
-                                              accum_steps = accum_steps, clip_grads = clip_grads,
-                                              max_norm = max_norm, device = device)
+                                              accum_steps = te_cfgs.accum_steps, 
+                                              clip_grads = te_cfgs.clip_grads,
+                                              max_norm = te_cfgs.max_norm, 
+                                              device = device)
         # Update optimizer learning rates
         scheduler.step()
         
@@ -203,25 +188,34 @@ def train(model: nn.Module,
         # Evaluation
         # -------------------------
         # Evaluate mAP at specified intervals and at the final epoch
-        should_eval = (eval_intervals is not None) and (
-            (epoch % eval_intervals == 0) or (epoch == num_epochs - 1)
+        should_eval = (te_cfgs.eval_intervals is not None) and (
+            (epoch % te_cfgs.eval_intervals == 0) or (epoch == te_cfgs.num_epochs - 1)
         )
         if should_eval: 
             eval_start = time.time()
 
             map_dict = evaluate.calc_dataset_map(model = model, dataloader = test_loader, 
-                                                obj_threshold = obj_threshold,
-                                                nms_threshold = nms_threshold,
-                                                map_thresholds = map_thresholds,
+                                                obj_threshold = te_cfgs.obj_threshold,
+                                                nms_threshold = te_cfgs.nms_threshold,
+                                                map_thresholds = te_cfgs.map_thresholds,
                                                 device = device)
 
-            map_history[epoch] = map_dict
+            map_history[epoch] = {
+                'map': map_dict['map'].item(),
+                'map_50': map_dict['map_50'].item(), # -1 if 0.5 not in map_thresholds
+                'map_75': map_dict['map_75'].item(), # -1 if 0.75 not in map_thresholds
+                'map_per_class': map_dict['map_per_class'].tolist(),
+                'classes': map_dict['classes'].tolist(),
+                'obj_threshold': te_cfgs.obj_threshold,
+                'nms_threshold': te_cfgs.nms_threshold,
+                'map_thresholds': te_cfgs.map_thresholds
+            }
 
             eval_end = time.time()
 
             epoch_logs.append(
                 f'{constants.BOLD_START}[EPOCH {epoch:>3} | {"Eval Metrics":<12}]{constants.BOLD_END} '
-                f'mAP: {map_dict["map"]:.4f}'
+                f'mAP: {map_history[epoch]["map"]:.4f}'
             )
 
             eval_time = f'{(eval_end - eval_start):.2f}' + ' sec'
@@ -230,14 +224,14 @@ def train(model: nn.Module,
         # -------------------------
         # Saving and Logs
         # -------------------------
-        if save_path is not None:
+        if ckpt_cfgs.save_path is not None:
             misc.save_checkpoint(model = model, 
                                  optimizer = optimizer, 
                                  scheduler = scheduler,
                                  epoch_losses = epoch_losses,
                                  map_history = map_history,
                                  last_epoch = epoch,
-                                 save_path = save_path)
+                                 save_path = ckpt_cfgs.save_path)
         
         epoch_logs.append(time_log + '\n')
         for log in epoch_logs:
@@ -308,26 +302,64 @@ class WarmupMultiStepLR(lr_scheduler.MultiStepLR):
             return super().get_lr()
         
 @dataclass
-class TrainingConfig:
+class TrainEvalConfigs():
+    '''
+    Class for setting YOLOv1 training and evaluation configurations.
+    '''
     num_epochs: int
     accum_steps: int = 1
     clip_grads: bool = False
     max_norm: float = 1.0
-
-@dataclass
-class EvalConfig:
+        
     eval_intervals: Optional[int] = None
     obj_threshold: float = 0.2
     nms_threshold: float = 0.5
     map_thresholds: Optional[List[float]] = None
-
+        
 @dataclass
-class CheckpointConfig:
+class CheckpointConfigs():
+    '''
+    Class for setting checkpoint saving and resuming configurations.
+    '''
     save_dir: Optional[str] = None
     checkpoint_name: Optional[str] = None
+    ignore_exists: bool = False
     resume_path: Optional[str] = None
     resume: bool = False
+    
+    def __post_init__(self):
+        # Get the save_path
+        match (self.save_dir, self.checkpoint_name):
+            case (None, None):
+                self.save_path = None # No saving needed
 
-@dataclass
-class DeviceConfig:
-    device: Union[str, torch.device] = 'cpu'
+            case (str(), str()):
+                # Add .pth if checkpoint_name doesn't end with .pth or .pts
+                if not self.checkpoint_name.endswith(('.pth', '.pt')):
+                    self.checkpoint_name += '.pth'
+                self.save_path = os.path.join(self.save_dir, self.checkpoint_name)
+
+            case (str(), None):
+                # Set a default file name for saved checkpoint
+                self.save_path =  os.path.join(self.save_dir, 'checkpoint.pth')
+
+            case (None, str()):
+                raise ValueError('`save_dir` must be a specified string if `checkpoint_name` is given.')
+                
+            
+        # Check if resuming and if a resume_path needs to be set
+        if self.resume and (self.resume_path is None):
+            assert self.save_path is not None, (
+                'Cannot resume training. Neither `resume_path` is provided, '
+                'nor both `save_dir` and `checkpoint_name`.'
+            )
+            # Use save_path as resume_path if none was provided explicitly
+            self.resume_path = self.save_path
+        
+        # If not resuming, check if save_path already has an existing file
+        elif (not self.resume) and (self.save_path is not None):
+            if os.path.exists(self.save_path) and (not self.ignore_exists):
+                raise FileExistsError(
+                    f'A file already exists at `save_path`: {self.save_path}, but `resume = False`. '
+                    f'To allow overwriting this file and start training from scratch, set `ignore_exists = True`.'
+                )
