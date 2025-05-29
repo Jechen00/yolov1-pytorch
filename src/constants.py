@@ -57,3 +57,11 @@ VOC_PLOT_DISPLAYS = {
     'sofa': ['Sofa', '#FFBB78'],
     'tvmonitor': ['TV/Monitor', "#649DE8"]
 }
+
+# These are the keys to the output dictionary in `loss.YOLOv1Loss`
+LOSS_KEYS = ['total', 'class', 'local', 'obj_conf', 'noobj_conf']
+LOSS_NAMES = {'total': 'Total',
+              'class': 'Class',
+              'local': 'Local',
+              'obj_conf': 'ObjConf',
+              'noobj_conf': 'NoObjConf'}

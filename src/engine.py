@@ -7,27 +7,30 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.optim import lr_scheduler, Optimizer
+from torchmetrics.detection.mean_ap import MeanAveragePrecision
 
 import os
 import time
 from dataclasses import dataclass
 from typing import List, Optional, Union, Dict, Tuple
 
-from src import engine, constants, evaluate
+from src import engine, constants, evaluate, postprocess
 from src.utils import misc
 
 
 #####################################
 # Functions
 #####################################
-def yolov1_train_step(model: nn.Module, 
-                      dataloader: DataLoader, 
-                      loss_fn: nn.Module, 
-                      optimizer: Optimizer, 
-                      accum_steps: int = 1,
-                      clip_grads: bool = False,
-                      max_norm: float = 1.0,
-                      device: Union[torch.device, str] = 'cpu') -> Dict[str, float]:
+def yolov1_train_step(
+    model: nn.Module, 
+    dataloader: DataLoader, 
+    loss_fn: nn.Module, 
+    optimizer: Optimizer, 
+    accum_steps: int = 1,
+    clip_grads: bool = False,
+    max_norm: float = 1.0,
+    device: Union[torch.device, str] = 'cpu'
+) -> Dict[str, float]:
     '''
     loss_fn (nn.Module): Loss function used as the error metric.
         The reduction method for the loss function must be 'mean'.
@@ -50,14 +53,7 @@ def yolov1_train_step(model: nn.Module,
     assert getattr(loss_fn, 'reduction', 'mean') == 'mean', "Expected 'mean' reduction in loss_fn"
     
     num_samps = len(dataloader.dataset)
-    
-    loss_sums = {
-        'total': 0.0,
-        'class': 0.0,
-        'local': 0.0,
-        'obj_conf': 0.0,
-        'noobj_conf': 0.0
-    }
+    loss_sums = {key: 0.0 for key in constants.LOSS_KEYS}
     
     model.train()
     for i, (imgs, targs) in enumerate(dataloader):
@@ -88,23 +84,98 @@ def yolov1_train_step(model: nn.Module,
     
     # Divide loss_sums by num_samps to get accurate average over all samples
     return {key: loss_sums[key].item() / num_samps for key in loss_sums}
+    
+def yolov1_val_step(
+    model: nn.Module, 
+    dataloader: DataLoader, 
+    loss_fn: nn.Module, 
+    should_eval: bool = False,
+    obj_threshold: Optional[float] = None,
+    nms_threshold: Optional[float] = None,
+    map_thresholds: Optional[List[float]] = None,
+    device: Union[torch.device, str] = 'cpu'
+) -> Tuple[dict, Optional[dict]]:
+    
+    assert getattr(loss_fn, 'reduction', 'mean') == 'mean', "Expected 'mean' reduction in loss_fn"
 
+    if should_eval:
+        eval_res = {
+            'obj_threshold': obj_threshold,
+            'nms_threshold': nms_threshold,
+            'map_thresholds': map_thresholds
+        }
 
-def train(model: nn.Module,
-          train_loader: DataLoader, 
-          test_loader: DataLoader, 
-          loss_fn: nn.Module, 
-          optimizer: Optimizer, 
-          scheduler: lr_scheduler._LRScheduler, 
-          te_cfgs: TrainEvalConfigs,
-          ckpt_cfgs: CheckpointConfigs,
-          device: Union[str, torch.device] = 'cpu') -> Tuple[dict, dict]:
+        for key, value in eval_res.items():
+            assert value is not None, f'If `should_eval` is True, `{key}` must not be None'
+
+        map_metric = MeanAveragePrecision(box_format = 'xyxy', 
+                                          class_metrics = True, 
+                                          iou_thresholds = map_thresholds)
+        
+    num_samps = len(dataloader.dataset)
+    loss_sums = {key: 0.0 for key in constants.LOSS_KEYS}
+
+    model.eval()
+    for imgs, targs in dataloader:
+        imgs, targs = imgs.to(device), targs.to(device)
+        batch_size = imgs.shape[0]
+        
+        with torch.inference_mode():
+            pred_logits = model(imgs)
+        
+        # -------------------------
+        # Loss
+        # -------------------------
+        # Compute loss for the batch
+        loss_dict = loss_fn(pred_logits, targs)
+
+        for key in loss_sums:
+            # Multiplying by batch_size gives 'sum' reduction
+            loss_sums[key] += loss_dict[key] * batch_size
+
+        # -------------------------
+        # Evaluation Metrics
+        # -------------------------
+        if should_eval:
+            targ_dicts = postprocess.decode_targets_yolov1(targs, S = model.S, B = model.B)
+            pred_dicts = evaluate.predict_yolov1_from_logits(
+                pred_logits = pred_logits,
+                S = model.S, B = model.B,
+                obj_threshold  = obj_threshold, 
+                nms_threshold = nms_threshold
+            )
+
+            map_metric.update(pred_dicts, targ_dicts)
+
+    loss_avgs = {key: loss_sums[key].item() / num_samps for key in loss_sums}
+
+    if should_eval:
+        map_res = map_metric.compute() # Compute mAP and mAR values
+
+        # Convert tensors to floats/lists
+        for key, value in map_res.items():
+            eval_res[key] = value.item() if value.ndim == 0 else value.tolist()
+
+        return loss_avgs, eval_res
+    else:
+        return loss_avgs, None
+
+def train(
+    model: nn.Module,
+    train_loader: DataLoader, 
+    val_loader: DataLoader, 
+    loss_fn: nn.Module, 
+    optimizer: Optimizer, 
+    scheduler: lr_scheduler._LRScheduler, 
+    te_cfgs: TrainEvalConfigs,
+    ckpt_cfgs: CheckpointConfigs,
+    device: Union[str, torch.device] = 'cpu'
+) -> Tuple[dict, dict, dict]:
     
     # -------------------------
     # Setup & Initialization
     # -------------------------
     start_logs = [] # Log messages to print prior to training/evaluation
-
     if ckpt_cfgs.save_path is not None:
         start_logs.append(
             f'{constants.BOLD_START}[NOTE]{constants.BOLD_END} ' 
@@ -119,25 +190,21 @@ def train(model: nn.Module,
         scheduler.load_state_dict(checkpoint['scheduler'])
         
         last_epoch = checkpoint['last_epoch']
-        epoch_losses = checkpoint['epoch_losses']
-        map_history = checkpoint['map_history']
+        train_losses = checkpoint['train_losses']
+        val_losses = checkpoint['val_losses']
+        eval_history = checkpoint['eval_history']
             
         start_logs.append(
             f'{constants.BOLD_START}[NOTE]{constants.BOLD_END} '
-            f'Successfully loaded previous checkpoint at {ckpt_cfgs.resume_path}. '
+            f'Successfully loaded checkpoint at {ckpt_cfgs.resume_path}. '
             f'Resuming training from epoch {last_epoch + 1}.'
         )
 
     else:
         last_epoch = -1
-        epoch_losses = {
-            'total': [],
-            'class': [],
-            'local': [],
-            'obj_conf': [],
-            'noobj_conf': []
-        }
-        map_history = {} # This is only used if eval_intervals is not None
+        train_losses = {key: [] for key in constants.LOSS_KEYS}
+        val_losses = {key: [] for key in constants.LOSS_KEYS}
+        eval_history = {} # This is only used if eval_intervals is not None
     
     for log in start_logs:
         print(log)
@@ -151,10 +218,9 @@ def train(model: nn.Module,
         # Training
         # -------------------------
         train_start = time.time()
-        
-        # Compute average losses (over batches) for the epoch
-            # This returns a dictionary where the values are already floats
-        avg_losses = engine.yolov1_train_step(model = model, dataloader = train_loader, 
+
+        # Compute average losses (over batches)
+        train_avgs = engine.yolov1_train_step(model = model, dataloader = train_loader, 
                                               loss_fn = loss_fn, optimizer = optimizer, 
                                               accum_steps = te_cfgs.accum_steps, 
                                               clip_grads = te_cfgs.clip_grads,
@@ -163,21 +229,16 @@ def train(model: nn.Module,
         # Update optimizer learning rates
         scheduler.step()
         
-        # Store each average loss
-        for key in epoch_losses:
-            epoch_losses[key].append(avg_losses[key])
+        # Store and log each average loss
+        train_log = f'{constants.BOLD_START}[EPOCH {epoch:>3} | {"Train Loss":<12}]{constants.BOLD_END} '
+        for key in constants.LOSS_KEYS:
+            train_losses[key].append(train_avgs[key])
+            train_log += f'{constants.LOSS_NAMES[key]}: {train_avgs[key]:<7.4f} | '
         
+        epoch_logs.append(train_log)
+
         train_end = time.time()
-        
-        epoch_logs.append(
-            f'{constants.BOLD_START}[EPOCH {epoch:>3} | {"Train Loss":<12}]{constants.BOLD_END} '
-            f'Total: {avg_losses["total"]:<7.4f} | '
-            f'Class: {avg_losses["class"]:<7.4f} | '
-            f'Local: {avg_losses["local"]:<7.4f} | '
-            f'ObjConf: {avg_losses["obj_conf"]:<7.4f} | '
-            f'NoObjConf: {avg_losses["noobj_conf"]:<7.4f}'
-        )
-        
+
         train_time = f'{(train_end - train_start):.2f}' + ' sec'
         time_log = (
             f'{constants.BOLD_START}[EPOCH {epoch:>3} | {"Time":<12}]{constants.BOLD_END} '
@@ -185,41 +246,44 @@ def train(model: nn.Module,
         )
         
         # -------------------------
-        # Evaluation
+        # Validation
         # -------------------------
-        # Evaluate mAP at specified intervals and at the final epoch
+        val_start = time.time()
+
+        # Evaluate metrics (mAP) at specified intervals and at the final epoch
         should_eval = (te_cfgs.eval_intervals is not None) and (
             (epoch % te_cfgs.eval_intervals == 0) or (epoch == te_cfgs.num_epochs - 1)
         )
-        if should_eval: 
-            eval_start = time.time()
 
-            map_dict = evaluate.calc_dataset_map(model = model, dataloader = test_loader, 
-                                                obj_threshold = te_cfgs.obj_threshold,
-                                                nms_threshold = te_cfgs.nms_threshold,
-                                                map_thresholds = te_cfgs.map_thresholds,
-                                                device = device)
+        # Compute average losses (over batches) and eval metrics
+            # eval_res is None if should_eval is False
+        val_avgs, eval_res = yolov1_val_step(model = model, dataloader = val_loader,
+                                             loss_fn = loss_fn,
+                                             should_eval = should_eval,
+                                             obj_threshold = te_cfgs.obj_threshold,
+                                             nms_threshold = te_cfgs.nms_threshold,
+                                             map_thresholds = te_cfgs.map_thresholds,
+                                             device = device)
+        # Store and log each average loss
+        val_log = f'{constants.BOLD_START}[EPOCH {epoch:>3} | {"Val Loss":<12}]{constants.BOLD_END} '
+        for key in constants.LOSS_KEYS:
+            val_losses[key].append(val_avgs[key])
+            val_log += f'{constants.LOSS_NAMES[key]}: {val_avgs[key]:<7.4f} | '
 
-            map_history[epoch] = {
-                'map': map_dict['map'].item(),
-                'map_50': map_dict['map_50'].item(), # -1 if 0.5 not in map_thresholds
-                'map_75': map_dict['map_75'].item(), # -1 if 0.75 not in map_thresholds
-                'map_per_class': map_dict['map_per_class'].tolist(),
-                'classes': map_dict['classes'].tolist(),
-                'obj_threshold': te_cfgs.obj_threshold,
-                'nms_threshold': te_cfgs.nms_threshold,
-                'map_thresholds': te_cfgs.map_thresholds
-            }
+        epoch_logs.append(val_log)
 
-            eval_end = time.time()
+        # Store and log eval metrics
+        if should_eval:
+            eval_history[epoch] = eval_res
 
             epoch_logs.append(
-                f'{constants.BOLD_START}[EPOCH {epoch:>3} | {"Eval Metrics":<12}]{constants.BOLD_END} '
-                f'mAP: {map_history[epoch]["map"]:.4f}'
+                f'{constants.BOLD_START}[EPOCH {epoch:>3} | {"Val Metrics":<12}]{constants.BOLD_END} '
+                f'mAP: {eval_res["map"]:.4f}'
             )
+        val_end = time.time()
 
-            eval_time = f'{(eval_end - eval_start):.2f}' + ' sec'
-            time_log += f' | Eval: {eval_time:<11}'
+        val_time = f'{(val_end - val_start):.2f}' + ' sec'
+        time_log += f' | Val: {val_time:<11}'
         
         # -------------------------
         # Saving and Logs
@@ -228,8 +292,9 @@ def train(model: nn.Module,
             misc.save_checkpoint(model = model, 
                                  optimizer = optimizer, 
                                  scheduler = scheduler,
-                                 epoch_losses = epoch_losses,
-                                 map_history = map_history,
+                                 train_losses = train_losses,
+                                 val_losses = val_losses,
+                                 eval_history = eval_history,
                                  last_epoch = epoch,
                                  save_path = ckpt_cfgs.save_path)
         
@@ -237,7 +302,7 @@ def train(model: nn.Module,
         for log in epoch_logs:
             print(log)
     
-    return epoch_losses, map_history
+    return train_losses, val_losses, eval_history
     
 
 #####################################
@@ -315,6 +380,11 @@ class TrainEvalConfigs():
     obj_threshold: float = 0.2
     nms_threshold: float = 0.5
     map_thresholds: Optional[List[float]] = None
+
+    def __post_init__(self):
+        # Set a default value for map_thresholds
+        if self.eval_intervals is not None:
+            self.map_thresholds = [0.5] if self.map_thresholds is None else self.map_thresholds
         
 @dataclass
 class CheckpointConfigs():

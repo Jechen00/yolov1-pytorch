@@ -52,8 +52,9 @@ def calc_grad_norm(model: nn.Module, order: int = 2):
 def save_checkpoint(model: nn.Module, 
                     optimizer: Optimizer, 
                     scheduler: lr_scheduler._LRScheduler, 
-                    epoch_losses: Dict[str, list],
-                    map_history: Dict[int, list],
+                    train_losses: Dict[str, list],
+                    val_losses: Dict[str, list],
+                    eval_history: Dict[int, list],
                     last_epoch: int,
                     save_dir: Optional[str] = None, 
                     checkpoint_name: Optional[str] = None,
@@ -66,8 +67,9 @@ def save_checkpoint(model: nn.Module,
         model (nn.Module): Model to save.
         optimizer (Optimizer): Optimizer used during training.
         scheduler (lr_scheduler._LRScheduler): Learning rate scheduler.
-        epoch_losses (Dict[str, list]): Dictionary of lists storing loss values per epoch.
-        map_history (Dict[int, list]): Dictionary tracking evaluation metrics.
+        train_losses (Dict[str, list]): Dictionary of lists storing train loss values per epoch.
+        val_losses (Dict[str, list]): Dictionary of lists storing validation loss values per epoch.
+        eval_history (Dict[int, list]): Dictionary tracking evaluation metrics.
         last_epoch (int): Index of the last completed epoch.
         save_dir (Optional[str]): Directory to save the checkpoint.
         checkpoint_name (Optional[str]): Filename for the checkpoint (should end with '.pth' or '.pt').
@@ -90,8 +92,9 @@ def save_checkpoint(model: nn.Module,
         'model': model.state_dict(),
         'optimizer': optimizer.state_dict(),
         'scheduler': scheduler.state_dict(),
-        'epoch_losses': epoch_losses,
-        'map_history': map_history,
+        'train_losses': train_losses,
+        'val_losses': val_losses,
+        'eval_history': eval_history,
         'last_epoch': last_epoch
     }
 

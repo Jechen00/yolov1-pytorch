@@ -268,21 +268,19 @@ def calc_dataset_map(model: nn.Module,
     '''
     map_thresholds = [0.5] if map_thresholds is None else map_thresholds
 
-    map = MeanAveragePrecision(box_format = 'xyxy', 
-                               class_metrics = True, 
-                               iou_thresholds = map_thresholds)
+    map_metric = MeanAveragePrecision(box_format = 'xyxy', 
+                                      class_metrics = True, 
+                                      iou_thresholds = map_thresholds)
     model.eval()
     for imgs, targs in dataloader:
         imgs, targs = imgs.to(device), targs.to(device)
 
         targ_dicts = postprocess.decode_targets_yolov1(targs, S = model.S, B = model.B)
+        pred_dicts = predict_yolov1(model, imgs, obj_threshold, nms_threshold)
 
-        with torch.inference_mode():
-            pred_dicts = predict_yolov1(model, imgs, obj_threshold, nms_threshold)
+        map_metric.update(pred_dicts, targ_dicts)
 
-        map.update(pred_dicts, targ_dicts)
-
-    return map.compute()
+    return map_metric.compute()
 
 
 # ----------------------------
@@ -293,21 +291,59 @@ def predict_yolov1(model: nn.Module,
                    obj_threshold: float = 0.25,
                    nms_threshold: float = 0.5) -> List[dict]:
     '''
-    Uses a YOLOv1 model to predicted the bounding boxes and class labels for a batch of preprocessed images.
-    The predictions are first filtered by object confidence score and then filtered by Non-Maximum Suppression (NMS).
-    The bounding box predictions are returned in (x_min, y_min, x_max, y_max) format.
+    This is a wrapper function for `predict_yolov1_from_logits`. 
+    It uses a batch of preprocessed images `X` as input, rather than output logits from the model.
 
     Args:
-        model (nn.Module): An instance of a YOLOv1 model to predict bounding boxes and class labels.
-        X (torch.Tensor): A tensor containing the batch of preprocessed images to predict on.
-                          This should be on the same device as the model.
+        model (nn.Module): The YOLOv1 model in `.eval()` mode.
+        X (torch.Tensor): The batch of preprocessed images to predict on. This should be on the same device as the model.
                           Shape is (batch_size, channels, height, width). 
                           For a standard YOLOv1 model, this has shape (batch_size, 3, 448, 448).
         obj_threshold (float): Threshold to filter out low predicted object confidence scores. Default is 0.25.
         nms_threshold (float): The IoU threshold used when performing NMS. Default is 0.5.
 
     Returns:
-        pred_dicts (List[dict]): A list of length batch_size, containing prediction dictionaries for each image sample in X.
+        pred_dicts (List[dict]): A list containing prediction dictionaries for each image sample in X.
+                                 For more details, see `predict_yolov1_from_logits`.
+    '''
+    assert len(X.shape) == 4, (
+        'Incorrect number of dimensions for `X`. Expecting shape (batch_size, channels, height, width).'
+    )
+    
+    # Set to evaluation mode if model was previously in .train()
+    if model.training:
+        model.eval()
+
+    with torch.inference_mode():
+        pred_logits = model(X) # Shape: (batch_size, S, S, B*5 + C)
+    
+    return predict_yolov1_from_logits(pred_logits = pred_logits,
+                                      S = model.S, B = model.B,
+                                      obj_threshold  = obj_threshold, 
+                                      nms_threshold = nms_threshold)
+
+def predict_yolov1_from_logits(pred_logits: torch.Tensor, 
+                               S: int = 7, 
+                               B: int = 2,
+                               obj_threshold: float = 0.25,
+                               nms_threshold: float = 0.5) -> List[dict]:
+    '''
+    Uses YOLOv1 output logits to predict the bounding boxes and class labels for a batch of preprocessed images.
+    The predictions are first filtered by object confidence score and then filtered by Non-Maximum Suppression (NMS).
+    The bounding box predictions are returned in (x_min, y_min, x_max, y_max) format.
+
+    Args:
+        pred_logits (torch.Tensor): The output logits from the forward function of a YOLOv1 model.
+                                    This should be on the same device as the model.
+                                    Shape is (batch_size, S, S, B*5 + C)
+                                    For a standard YOLOv1 model, this has shape (batch_size, 7, 7, 30).
+        S (int): Grid size.
+        B (int): Number of predicted bounding boxes per grid cell.
+        obj_threshold (float): Threshold to filter out low predicted object confidence scores. Default is 0.25.
+        nms_threshold (float): The IoU threshold used when performing NMS. Default is 0.5.
+
+    Returns:
+        pred_dicts (List[dict]): A list of length batch_size, containing prediction dictionaries for each image sample in pred_logits.
                                  The keys of each prediction dictionary are named to be compatible with torchmetrics.detection.mean_ap.
                                  They are as follows:
                                     - boxes (torch.Tensor): The predicted bounding boxes in (x_min, y_min, x_max, y_max) format.
@@ -318,16 +354,11 @@ def predict_yolov1(model: nn.Module,
                                                              This is defined as P(class_i) * IoU^{truth}_{pred}.
                                                              Shape is (num_filtered_bboxes,)
     '''
-    assert len(X.shape) == 4, (
-        'Incorrect number of dimensions for `X`. Expecting shape (batch_size, channels, height, width).'
+    assert len(pred_logits.shape) == 4, (
+        'Incorrect number of dimensions for `pred_logits`. Expecting shape (batch_size, S, S, B*5 + C).'
     )
 
-    device = X.device
-    S, B = model.S, model.B
-    
-    model.eval()
-    with torch.inference_mode():
-        preds = model(X) # Shape: (batch_size, S, S, B*5 + C)
+    device = pred_logits.device
 
     grid_i, grid_j = torch.meshgrid(torch.arange(S), torch.arange(S), indexing = 'ij')
     grid_i = grid_i[None, ..., None].to(device)  # Shape: (1, S, S, 1)
@@ -335,9 +366,9 @@ def predict_yolov1(model: nn.Module,
 
     pred_dicts = []
     # Loop over the batch to perform confidence score filtering and NMS
-    for i in range(preds.shape[0]):
+    for i in range(pred_logits.shape[0]):
         pred_res = {}
-        pred_samp = preds[i].unsqueeze(0) # Shape: (1, S, S, B*5 + C)
+        pred_samp = pred_logits[i].unsqueeze(0) # Shape: (1, S, S, B*5 + C)
 
         # pred_bboxes shape: (1, S, S, B, 5)
         # pred_prob_dist shape: (1, S, S, B, C)

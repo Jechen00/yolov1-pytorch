@@ -14,7 +14,7 @@ from src.utils import convert
 # Functions
 #####################################
 def decode_logits_yolov1(
-        pred: torch.Tensor, 
+        pred_logits: torch.Tensor, 
         S: int = 7, 
         B: int = 2, 
         split_output: bool = False
@@ -27,8 +27,8 @@ def decode_logits_yolov1(
     Optionally splits the output into bounding box predictions and class probabilities.
 
     Args:
-        pred (torch.Tensor): Tensor of logits from YOLOv1 output. 
-                             Shape is (batch_size, S, S, B*5 + C), where C is the number of classes.
+        pred_logits (torch.Tensor): Tensor of logits from YOLOv1 output. 
+                                    Shape is (batch_size, S, S, B*5 + C), where C is the number of classes.
         S (int): Grid size.
         B (int): Number of bounding boxes per grid cell.
         split_output (bool): Whether to return separate tensors for bboxes and class predictions.
@@ -41,8 +41,8 @@ def decode_logits_yolov1(
                 - bbox_preds: (batch_size, S, S, B, 5)
                 - class_probs: (batch_size, S, S, B, C)
     '''
-    bbox_logits = pred[..., :B*5]
-    class_logits = pred[..., B*5:]
+    bbox_logits = pred_logits[..., :B*5]
+    class_logits = pred_logits[..., B*5:]
 
     bbox_preds = torch.sigmoid(bbox_logits) # Bbox predictions and confidence should be within [0, 1]
     class_probs = F.softmax(class_logits, dim = -1) # Class predictions need to be softmaxed to be a proper distribution

@@ -88,14 +88,14 @@ class YOLOv1Loss(nn.Module):
         return (pred_bboxes[..., -1]**2).sum()
 
     def forward(self, 
-                preds: torch.Tensor, 
+                pred_logits: torch.Tensor, 
                 targs: torch.Tensor) -> torch.Tensor:
         '''
-        preds shape: (batch_size, S, S, B*5 + C)
+        pred_logits shape: (batch_size, S, S, B*5 + C)
         targs shape: (batch_size, S, S, B*5 + C)
         '''
 
-        assert not torch.isnan(preds).any(), 'NaNs in `preds`'
+        assert not torch.isnan(pred_logits).any(), 'NaNs in `pred_logits`'
         assert not torch.isnan(targs).any(), 'NaNs in `targs`'
 
         device = targs.device
@@ -107,7 +107,7 @@ class YOLOv1Loss(nn.Module):
         grid_j = grid_j[None, ..., None].to(device)  # Shape: (1, S, S, 1)
 
         # Shape: (batch_size, S, S, B*5 + C)
-        preds = postprocess.decode_logits_yolov1(preds, self.S, self.B, split_output = False)
+        preds = postprocess.decode_logits_yolov1(pred_logits, self.S, self.B, split_output = False)
 
         # Shape: (batch_size, S, S, B, 5)
         targ_bboxes = targs[..., :self.B*5].clone().view(batch_size, self.S, self.S, self.B, 5)
