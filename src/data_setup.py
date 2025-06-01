@@ -13,7 +13,7 @@ import random
 import textwrap
 import xml.etree.ElementTree as ET
 from PIL import Image
-from typing import Tuple, Callable, Optional
+from typing import Tuple, Callable, Optional, Union
 
 from src import constants
 from src.constants import BOLD_START, BOLD_END
@@ -53,7 +53,7 @@ VOC_DATA = {
 def get_transforms(train: bool = True) -> v2.Compose:
     '''
     Creates a torchvision transform pipeline for preprocessing images 
-    during training or testing.
+    during training or validation/testing.
 
     Args:
         train (bool): If True, includes data augmentation transforms such as random HSV adjustments
@@ -90,20 +90,20 @@ def get_dataloaders(root: str,
                     B: int = 2,
                     max_imgs: Optional[int] = None) -> Tuple[DataLoader, DataLoader]:
     '''
-    Creates training and testing dataloaders for the Pascal VOC dataset.
-    The training dataset using 2012+2007 data, while the validation dataset uses only 2012 data.
+    Creates training and validation/testing dataloaders for the Pascal VOC dataset.
+    The training dataset using 2012+2007 data, while the validation/test dataset uses only 2007 test data.
 
     Args:
         root (str): Path to download VOC datasets.
-        batch_size (int): Size used to split training and testing datasets into batches.
+        batch_size (int): Size used to split the datasets into batches.
         num_workers (int): Number of workers to use for multiprocessing. Default is 0.
         S (int): Grid size used to separated images and determine regions for boudning boxe predictions. Default is 7.
         B (int): The number of bounding boxes to predict per grid cell. Default is 2.
-        max_imgs (optional, int): The maximum number of images to include per training and testing dataset.
+        max_imgs (optional, int): The maximum number of images to include per dataset.
 
     Returns:
         train_loader (DataLoader): Dataloader for the training set (Pascal VOC 2012+2007 data).
-        test_loader (DataLoader): Dataloader for the testing set (Pascal VOC 2007 test data).
+        test_loader (DataLoader): Dataloader for the validation/test set (Pascal VOC 2007 test data).
     '''
     
     train_dataset = VOCDataset(root = root, train = True, 
@@ -148,7 +148,7 @@ def get_dataloaders(root: str,
 #####################################
 # Classes
 #####################################
-class RandomHSV:
+class RandomHSV():
     '''
     Data augmentation transform to randomly adjust the saturation and exposure/brightness of a PIL image.
     
@@ -162,10 +162,17 @@ class RandomHSV:
         self.s_range = s_range
         self.v_range = v_range
 
-    def __call__(self, img: Image.Image, anno_info: dict):
+    def __call__(self, img: Image.Image, anno_info: dict) -> Tuple[Image.Image, dict]:
         '''
-        img (Image.Image): a PIL image to be randomly transformed
-        anno_info (dict): Annotation information for img.
+        Applies the transform to a PIL image.
+
+        Args:
+            img (Image.Image): a PIL image to be randomly transformed.
+            anno_info (dict): Annotation information for `img`.
+
+        Returns:
+            Image.Image: The transformed PIL image.
+            anno_info (dict): The original annotation information (no transforms applied to this).
         '''
 
         # Mode of h, s, v is grayscale ('L')
@@ -184,8 +191,8 @@ class RandomHSV:
     
 class VOCDataset(Dataset):
     '''
-    The training set combines the trainval set from  Pascal VOC 2007 and 2012. 
-    The test set is from Pascal VOC 2007.
+    The training set combines the trainval data from  Pascal VOC 2007 and 2012. 
+    The validation/test set is the test data from Pascal VOC 2007.
     
     Dataset based on https://docs.pytorch.org/vision/main/_modules/torchvision/datasets/voc.html#VOCDetection
     '''
@@ -259,7 +266,7 @@ class VOCDataset(Dataset):
         '''
         return len(self.voc_imgs)
     
-    def __repr__(self):
+    def __repr__(self) -> str:
         '''
         Return a readable string representation of the dataset.
         Includes dataset name, number of samples, number of classes, example image and target shapes,
@@ -287,7 +294,20 @@ class VOCDataset(Dataset):
         '''
         return textwrap.dedent(dataset_str)
     
-    def __getitem__(self, idx: int):
+    def __getitem__(
+            self, 
+            idx: int
+        ) -> Tuple[Union[Image.Image, torch.Tensor], torch.Tensor]:
+        '''
+        Gets the transformed image and target for a given index.
+
+        Returns:
+            img (Image.Image or torch.Tensor): The transformed image at `idx`.
+                                               The exact type of `img` depends 
+                                               on the transforms of the dataset.
+            torch.Tensor: The corresponding target tensor at `idx`.
+                           It has shape (S, S, B*5 + C).
+        '''
         img = self.get_img(idx)
         anno_info = self.get_anno_info(idx)
         
@@ -304,8 +324,14 @@ class VOCDataset(Dataset):
     
     def get_anno_info(self, idx: int) -> dict:
         '''
-        Parses an annotation xml file from the dataset, 
-        and returns the label and bounding box information (pre-transform).
+        Parses the annotation XML file for the given index to retrieve 
+        object labels and bounding box information (pre-transform).
+
+        Returns:
+            info_dict (dict): A dictionary containing:
+                                - labels (torch.Tensor): Class indices for each object in the image.
+                                - boxes (BoundingBoxes): Bounding boxes in (x_min, y_min, x_max, y_max) format,
+                                                         scaled to the original image size.
         '''
         xml_root = ET.parse(self.voc_annotations[idx]).getroot()
 
@@ -333,7 +359,30 @@ class VOCDataset(Dataset):
         
         return info_dict
     
-    def _encode_yolov1_target(self, img, anno_info):
+    def _encode_yolov1_target(self, 
+                              img: Union[Image.Image, torch.Tensor], 
+                              anno_info: dict) -> torch.Tensor:
+        '''
+        Encodes annotation information into a YOLOv1 target tensor for a single image.
+        Note: Only one object is encoded per grid cell.
+
+        Args:
+            img (Image.Image or torch.Tensor): The input image, used to determine spatial dimensions
+                                               for normalizing bounding boxes.
+            anno_info (dict): Dictionary containing:
+                                - labels (torch.Tensor): Class indices for each object in the image.
+                                - boxes (BoundingBoxes): Bounding boxes in (x_min, y_min, x_max, y_max) format.
+                                                         Coordinates should be scaled to the original image size.
+
+        Returns:
+            torch.Tensor: A target tensor of shape (S, S, B*5 + C),
+                          where each grid cell contains:
+                            -  B bounding boxes in (x_center, y_center, width, height, confidence) format.
+                               The (x_center, y_center) are relative to grid boundaries, 
+                               while (width, height) are relative to the full image.
+                               Also note that only the first bbox has meaningful values.
+                            - One-hot class encoding of length C
+        '''
         target = torch.zeros(self.S, self.S, self.B * 5 + self.C)
 
         bboxes = convert.corner_to_center_format(anno_info['boxes'])

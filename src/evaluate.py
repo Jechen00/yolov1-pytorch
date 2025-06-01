@@ -295,7 +295,7 @@ def predict_yolov1(model: nn.Module,
     It uses a batch of preprocessed images `X` as input, rather than output logits from the model.
 
     Args:
-        model (nn.Module): The YOLOv1 model in `.eval()` mode.
+        model (nn.Module): The YOLOv1 model. Will be set to `.eval()` mode if not done so already.
         X (torch.Tensor): The batch of preprocessed images to predict on. This should be on the same device as the model.
                           Shape is (batch_size, channels, height, width). 
                           For a standard YOLOv1 model, this has shape (batch_size, 3, 448, 448).
@@ -344,7 +344,7 @@ def predict_yolov1_from_logits(pred_logits: torch.Tensor,
 
     Returns:
         pred_dicts (List[dict]): A list of length batch_size, containing prediction dictionaries for each image sample in pred_logits.
-                                 The keys of each prediction dictionary are named to be compatible with torchmetrics.detection.mean_ap.
+                                 The keys of each prediction dictionary are named to be compatible with `torchmetrics.detection.mean_ap`.
                                  They are as follows:
                                     - boxes (torch.Tensor): The predicted bounding boxes in (x_min, y_min, x_max, y_max) format.
                                                             Shape is (num_filtered_bboxes, 4).

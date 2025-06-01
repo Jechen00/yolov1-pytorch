@@ -4,6 +4,8 @@
 import torch
 from torch import nn
 
+from typing import Dict
+
 from src import evaluate, postprocess
 from src.utils import convert
 
@@ -15,16 +17,23 @@ class YOLOv1Loss(nn.Module):
     '''
     Loss function for YOLOv1 model.
     Reference: https://www.cv-foundation.org/openaccess/content_cvpr_2016/papers/Redmon_You_Only_Look_CVPR_2016_paper.pdf
+
+    Args:
+        S (int): Grid size. Default is 7.
+        B (int): Number of bounding boxes per grid cell. Default is 2.
+        C (int): Number of classes. Default is 20.
+        lambda_coord (float): Weight of the localization loss. Default is 5.
+        lambda_noobj (float): Weight of the no-object loss. Default is 0.5.
+        reduction ('sum' or 'mean'): Reduction method for the losses over batch samples.
+                                     If 'sum' the losses are added. If 'mean', the losses are averaged.
+                                     Default is 'mean'.
     '''
     def __init__(self, S: int = 7, B: int = 2, C: int = 20,
                  lambda_coord: float = 5, lambda_noobj: float = 0.5,
                  reduction: str = 'mean'):
-        '''
-        reduction ('sum' or 'mean'): Reduction method for the losses over batch samples.
-                                     If 'sum' the losses are added. If 'mean', the losses are averaged.
-                                     Default is 'mean'.
-        '''
         super().__init__()
+        assert reduction in ['mean', 'sum'], "The `reduction` method must be 'mean' or 'sum'."
+
         self.S, self.B, self.C = S, B, C
         self.lambda_coord, self.lambda_noobj = lambda_coord, lambda_noobj
         self.reduction = reduction
@@ -34,9 +43,19 @@ class YOLOv1Loss(nn.Module):
                    targs: torch.Tensor, 
                    obj_mask: torch.Tensor) -> torch.Tensor:
         '''
-        preds shape: (batch_size, S, S, B*5 + C)
-        targs shape: (batch_size, S, S, B*5 + C)
-        obj_mask shape: (batch_size, S, S)
+        Computes the classification loss for the YOLOv1 model, defined as the 
+        squared error between predicted class probabilities and target labels.
+        This loss is only computed for grid cells with an object.
+
+        Args:
+            preds (torch.Tensor): Postprocessed model outputs of shape (batch_size, S, S, B*5 + C).
+                                  The last C elements per cell should already be softmaxed.
+            targs (torch.Tensor): Encoded target tensor representing the ground truth.
+                                  Shape is (batch_size, S, S, B*5 + C).
+            obj_mask (torch.Tensor): Boolean mask of shape (batch_size, S, S),
+                                     indicating cells with an object.
+        Returns:
+            torch.Tensor: Scalar classification loss.
         '''
     
         # preds[obj_mask] shape: (num_object_cells, B*5 + C)
@@ -50,10 +69,29 @@ class YOLOv1Loss(nn.Module):
                     ious: torch.Tensor, 
                     obj_resp_mask: torch.Tensor) -> torch.Tensor:
         '''
-        preds shape: (batch_size, S, S, B*5 + C)
-        targs shape: (batch_size, S, S, B*5 + C)
-        iou shape: (batch_size, S, S, B)
-        obj_resp_mask shape: (batch_size, S, S, B)
+        Computes the localization loss and object confidence loss for the YOLOv1 model.
+        This is only performed on responsible bboxes in grid cells with an object.
+
+            - Localization Loss: The squared error between predicted and target bbox coordinates
+                                 in (x_center, y_center, width, height) format.
+                                 Note that (x_center, y_center) are relative to grid boundaries,
+                                 while (width, height) are relative to the full image.
+                                 The width and height are also square rooted before computing the loss.
+
+            - Object Confidence Loss: The squared error between predicted object confidence 
+                                      and IoU (target object confidence).
+
+        Args:
+            preds (torch.Tensor): Postprocessed model outputs of shape (batch_size, S, S, B*5 + C).
+                                  The first B*5 elements per cell should already be sigmoided.
+            targs (torch.Tensor): Encoded target tensor representing the ground truth.
+                                  Shape is (batch_size, S, S, B*5 + C).
+            ious: The IoU values computed between predicted and target bboxes. Shape is (batch_size, S, S, B).
+            obj_resp_mask: Boolean mask of shape (batch_size, S, S, B), indicating responsible bboxes.
+
+        Returns:
+            torch.Tensor: Scalar localization loss.
+            torch.Tensor: Scalar object confidence loss.
         '''
         
         # Note: this flattens across the batch and spatial dimensions
@@ -73,15 +111,28 @@ class YOLOv1Loss(nn.Module):
                        preds: torch.Tensor, 
                        obj_resp_mask: torch.Tensor) -> torch.Tensor:
         '''
-        preds shape: (batch_size, S, S, B*5 + C)
-        obj_resp_mask shape: (batch_size, S, S, B)
-        '''
+        Computes the no-object confidence loss for the YOLOv1 model,
+        defined as the squared error between predicted object confidence 
+        and zero (target object confidence).
+
+        This is computed for the following bboxes:
+            - All bboxes (total is B) in grid cells without an object.
+            - Non-responsible bboxes (total is B-1) in grid cells with an object.
         
-        # Note: By DeMorgan's Law, `~obj_resp_mask` is gives all bboxes that are either from no-object cells 
-            # or are from object cells, but are not responsible for it
-        # Note: I am including the predicted bboxes that are not responsible in an object cell
-            # This is to specialize them so that if they are poor fits for the object cell (low IoU), 
-            # their confidence should close to 0 and they should stay quiet.
+        For the second point, these bboxes are included to specialize them,
+        so that if they are poor fits for the object cell (low IoU), 
+        their confidence should close to 0 and they should stay quiet.
+
+        Args:
+            preds (torch.Tensor): Postprocessed model outputs of shape (batch_size, S, S, B*5 + C).
+                                  The first B*5 elements per cell should already be sigmoided.
+            obj_resp_mask: Boolean mask of shape (batch_size, S, S, B), indicating responsible bboxes.
+                        Note: By DeMorgan's Law, `~obj_resp_mask` gives all bboxes that are either from no-object cells 
+                                or are from object cells, but are not responsible for it.
+
+        Returns:
+            torch.Tensor: Scalar no-object confidence loss.
+        '''
         # Shape: (num_zero_confidence_bboxes, 5)
         pred_bboxes = preds[..., :self.B*5].view(-1, self.S, self.S, self.B, 5)[~obj_resp_mask]
 
@@ -89,10 +140,26 @@ class YOLOv1Loss(nn.Module):
 
     def forward(self, 
                 pred_logits: torch.Tensor, 
-                targs: torch.Tensor) -> torch.Tensor:
+                targs: torch.Tensor) -> Dict[str, torch.Tensor]:
         '''
-        pred_logits shape: (batch_size, S, S, B*5 + C)
-        targs shape: (batch_size, S, S, B*5 + C)
+        Computes the full YOLOv1 loss across a batch, according to: https://arxiv.org/pdf/1506.02640.
+        The components of this loss are also returned.
+
+        Args:
+            pred_logits (torch.Tensor): Output logits from a YOLOv1 model. 
+                                        Shape is (batch_size, S, S, B*5 + C).
+            targs (Torch.Tensor): Encoded target tensor representing the ground truth. 
+                                  Shape is (batch_size, S, S, B*5 + C).
+
+        Returns:
+            loss_dict (Dict[str, torch.Tensor]): Dictionary containing the loss component values.
+                The keys are as follows:
+                    - total: The total loss, summing together all components of the YOLOv1 loss.
+                    - class: The classification loss in object cells.
+                    - local: The localization loss for responsible bboxes in object cells.
+                    - obj_conf: The object confidence loss for responsible bboxes in object cells.
+                    - noobj_conf: The no-object confidence loss for bboxes in no-object cells.
+                                 and non-responsible bboxes in object cells.
         '''
 
         assert not torch.isnan(pred_logits).any(), 'NaNs in `pred_logits`'

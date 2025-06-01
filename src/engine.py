@@ -32,21 +32,28 @@ def yolov1_train_step(
     device: Union[torch.device, str] = 'cpu'
 ) -> Dict[str, float]:
     '''
-    loss_fn (nn.Module): Loss function used as the error metric.
-        The reduction method for the loss function must be 'mean'.
-        Also, it should return a loss dictionary storing the following components of the YOLOv1 loss:
-             - total: The total loss, summing together all components of the YOLOv1 loss
-             - class: The classification loss in object cells
-             - local: The localization loss (center coordinates, height, and width) in object cells
-             - obj_conf: The object confidence loss for responsible bboxes in object cells
-             - noobj_conf: The no-object confidence loss for bboxes in no-object cells
-                           and non-responsible bboxes in object cells
-    accum_steps (int): Number of batches to loop over before performing an optimizer step.
-                       If `accum_steps > 1`, gradients are accumulated over multiple batches,
-                       simulating a larger batch size. Default is 1.
-                       See: https://lightning.ai/blog/gradient-accumulation/
-    clip_grads (bool): Controls whether gradient clipping should be used to prevent exploding gradients. Default is False.
-    max_norm (float): Maximum norm for gradients, only used if gradient clipping is enabled. Default is 1.0.
+    Performs a single training epoch for a YOLOv1 model, 
+    including optional gradient accumulation and clipping.
+
+    Args:
+        model (nn.Module): The YOLOv1 model to train. Should be already on `device`.
+        dataloader (Dataloader): Dataloader for the training dataset.
+        loss_fn (nn.Module): YOLOv1 loss function with reduction method set to 'mean'. 
+                             Its output should be a dictionary with keys matching `constants.LOSS_KEYS`, 
+                             including a 'total' key representing the full loss.
+        optimizer (Optimizer): Optimizer used to update model parameters every accumulated batch.
+        accum_steps (int): Number of batches to loop over before performing an optimizer step.
+                           If `accum_steps > 1`, gradients are accumulated over multiple batches,
+                           simulating a larger batch size. Default is 1.
+                           See: https://lightning.ai/blog/gradient-accumulation/
+        clip_grads (bool): Whether gradient clipping should be used to prevent exploding gradients. Default is False.
+        max_norm (float): Maximum norm for gradients, only used if gradient clipping is enabled. Default is 1.0.
+        device (torch.device or str): The device to perform computations on. Default is 'cpu'.
+
+    Returns:
+        Dict[str, float]: Dictionary mapping the components of the YOLOv1 training loss
+                          to its value averaged over all samples in the dataset. 
+                          The keys of this dictionary are the same as the output of `loss_fn`.
     '''
     
     assert accum_steps > 0, 'Number of accumulation steps, `accum_steps`, must be at least 1'
@@ -95,7 +102,35 @@ def yolov1_val_step(
     map_thresholds: Optional[List[float]] = None,
     device: Union[torch.device, str] = 'cpu'
 ) -> Tuple[dict, Optional[dict]]:
-    
+    '''
+    Performs a single validation epoch for a YOLOv1 model. 
+    This includes YOLOv1 loss computation and optional evaluation metrics (mAP and mAR).
+
+    Args:
+        model (nn.Module): The YOLOv1 model to train. Should be already on `device`.
+        dataloader (Dataloader): Dataloader for the validation dataset.
+        loss_fn (nn.Module): YOLOv1 loss function with reduction method set to 'mean'. 
+                             Its output should be a dictionary with keys matching `constants.LOSS_KEYS`, 
+                             including a 'total' key representing the full loss.
+        should_eval (bool): Whether to compute evaluation metrics (mAP and mAR). Default is False.
+                            If `True`, must provide `obj_threshold`, `nms_threshold`, and `map_thresholds`.
+        obj_threshold (optional, float): Threshold to filter out low predicted object confidence scores 
+                                         when computing mAP/mAR. 
+        nms_threshold (optional, float): The IoU threshold used when performing NMS for mAP/mAR.
+        map_thresholds (optional, List[float]): A list of IoU thresholds used for mAP/mAR calculations.
+        device (torch.device or str): The device to perform computations on. Default is 'cpu'.
+
+    Returns:
+        loss_avgs (Dict[str, float]): Dictionary mapping the components of the YOLOv1 validation loss
+                                      to its value averaged over all samples in the dataset. 
+                                      The keys of this dictionary are the same as the output of `loss_fn`.
+
+        eval_res (dict or None): If `should_eval = True`, this is a metric dictionary (with mAP and mAR values) 
+                                 produced by `MeanAveragePrecision.compute()`. If `should_eval = False`, this is None
+
+                                 For more details on the metric dictionaries, see:
+                                        https://lightning.ai/docs/torchmetrics/stable/detection/mean_average_precision.html
+    '''
     assert getattr(loss_fn, 'reduction', 'mean') == 'mean', "Expected 'mean' reduction in loss_fn"
 
     if should_eval:
@@ -104,7 +139,6 @@ def yolov1_val_step(
             'nms_threshold': nms_threshold,
             'map_thresholds': map_thresholds
         }
-
         for key, value in eval_res.items():
             assert value is not None, f'If `should_eval` is True, `{key}` must not be None'
 
@@ -148,12 +182,10 @@ def yolov1_val_step(
             map_metric.update(pred_dicts, targ_dicts)
 
     loss_avgs = {key: loss_sums[key].item() / num_samps for key in loss_sums}
-
     if should_eval:
         map_res = map_metric.compute() # Compute mAP and mAR values
-
-        # Convert tensors to floats/lists
         for key, value in map_res.items():
+            # Convert tensors to floats/lists
             eval_res[key] = value.item() if value.ndim == 0 else value.tolist()
 
         return loss_avgs, eval_res
@@ -171,7 +203,47 @@ def train(
     ckpt_cfgs: CheckpointConfigs,
     device: Union[str, torch.device] = 'cpu'
 ) -> Tuple[dict, dict, dict]:
-    
+    '''
+    Trains a YOLOv1 model, tracking loss values and evaluation metrics (e.g. mAP and mAR).
+    Supports training from scratch or resuming from a checkpoint.
+
+    The flow of each epoch is as follows:
+        - Computes training loss and updates the model (per accumulated batch)
+        - Computes validation loss per epoch
+        - Optionally computes mAP/mAR at evaluation epochs
+        - Optionally saves model checkpoints
+
+    Args:
+        model (nn.Module): The YOLOv1 model to train. Should be already on `device`.
+        train_loader (DataLoader): Dataloader for training dataset.
+        val_loader (DataLoader):  Dataloader for validation dataset.
+        loss_fn (nn.Module): The YOLOv1 loss function used as the error metric.
+                             The reduction method for the loss function must be 'mean'.
+                             It's output should also be a dictionary containing the keys in `constants.LOSS_KEYS`.
+                             The most important key is 'total', representing the full YOLOv1 loss value.
+        optimizer (Optimizer): Optimizer used to update model parameters every accumulated batch.
+        scheduler (lr_scheduler._LRScheduler): Learning rate scheduler. 
+        te_cfgs (TrainEvalConfigs): Configuration dataclass for training and evaluation parameters.
+        ckpt_cfgs (CheckpointConfigs): Configuration dataclass for saving and resuming checkpoints.
+        device (torch.device or str): The device to perform computations on. Default is 'cpu'.
+
+    Returns:
+        train_losses (Dict[str, list]): Dictionary mapping loss components in `constants.LOSS_KEYS`
+                                        to their list of training values per epoch.
+        val_losses (Dict[str, list]): Same as `train_losses`, but for the validation dataset.
+        eval_history (dict): Dictionary mapping evaluation epoch indices (int)
+                             to metric dictionaries (with mAP and mAR values) 
+                             returned by `MeanAveragePrecision.compute()`. 
+
+                            Example eval_history: 
+                                {
+                                    5: {'map': 0.45, ...},
+                                    10: {'map': 0.5, ...}
+                                }
+
+                            For more details on the metric dictionaries, see:
+                                https://lightning.ai/docs/torchmetrics/stable/detection/mean_average_precision.html
+    '''
     # -------------------------
     # Setup & Initialization
     # -------------------------
@@ -244,7 +316,7 @@ def train(
             f'{constants.BOLD_START}[EPOCH {epoch:>3} | {"Time":<12}]{constants.BOLD_END} '
             f'Train: {train_time:<11}'
         )
-        
+
         # -------------------------
         # Validation
         # -------------------------
@@ -303,7 +375,7 @@ def train(
             print(log)
     
     return train_losses, val_losses, eval_history
-    
+
 
 #####################################
 # Classes
@@ -312,21 +384,22 @@ class WarmupMultiStepLR(lr_scheduler.MultiStepLR):
     '''
     This adds a warmup period to the MultiStepLR scheduler from: 
         https://github.com/pytorch/pytorch/blob/v2.7.0/torch/optim/lr_scheduler.py#L485
-
-    optimizer (torch.optim.Optimizer): Optimizater whose learning rates will be changed by the scheduler.
-    pre_warmup_lrs (List[float]): A list of learning rates for each parameter group 
-                                  at the start of training (epoch 0).
-                                  The scheduler will linearly increase the learning rate 
-                                  from these values to the base learning rates over the warmup period.
-    milestones (list): List of indices for the milestone epochs to apply learning rate decay.
-                       These indices must be after the value of `warmup_epochs`.
-    warmup_epochs (int): Number of epochs over which to linearly increase the learning rates from 
-                         pre_warmup_lrs to the base learning rates. 
-                         On epoch `warmup_epochs` learning rates will reach the base learning rates.
-                         If `warmup_epochs = 0`, the behavior of the scheduler will be the same as MultiStepLR.
-                         Default is 5.
-    gamma (float): Multiplicative factor for the learning rate decay. Default is 0.1.
-    last_epoch (int): The index of last epoch. Default is -1, which indicates the start of training.
+    
+    Args:
+        optimizer (torch.optim.Optimizer): Optimizater whose learning rates will be changed by the scheduler.
+        pre_warmup_lrs (List[float]): A list of learning rates for each parameter group 
+                                    at the start of training (epoch 0).
+                                    The scheduler will linearly increase the learning rate 
+                                    from these values to the base learning rates over the warmup period.
+        milestones (list): List of indices for the milestone epochs to apply learning rate decay.
+                        These indices must be after the value of `warmup_epochs`.
+        warmup_epochs (int): Number of epochs over which to linearly increase the learning rates from 
+                            pre_warmup_lrs to the base learning rates. 
+                            On epoch `warmup_epochs` learning rates will reach the base learning rates.
+                            If `warmup_epochs = 0`, the behavior of the scheduler will be the same as MultiStepLR.
+                            Default is 5.
+        gamma (float): Multiplicative factor for the learning rate decay. Default is 0.1.
+        last_epoch (int): The index of last epoch. Default is -1, which indicates the start of training.
     '''
     def __init__(self, 
                  optimizer: Optimizer, 
@@ -369,7 +442,24 @@ class WarmupMultiStepLR(lr_scheduler.MultiStepLR):
 @dataclass
 class TrainEvalConfigs():
     '''
-    Class for setting YOLOv1 training and evaluation configurations.
+    Data class for setting YOLOv1 training and evaluation configurations.
+
+    Args:
+        num_epochs (int): Number of epochs to train the YOLOv1 model.
+        accum_steps (int): Number of batches to loop over before updating model parameters. 
+                           Applies during training only. 
+                           If `accum_steps > 1`, gradients are accumulated over multiple batches,
+                           simulating a larger batch size. Default is 1.
+                           See: https://lightning.ai/blog/gradient-accumulation/
+        clip_grads (bool): Whether to clip gradients during training to prevent exploding gradients. Default is False.
+        max_norm (float): Maximum norm for gradients, only used if gradient clipping is enabled. Default is 1.0.
+        eval_intervals (optional, int): Number of epochs to wait before computing evaluation metrics on the validation dataset.
+                                        If None, evaluation metrics are never computed. Default is None.
+        obj_threshold (float): Threshold to filter out low predicted object confidence scores. 
+                               Used during evaluation when computing mAP/mAR. Default is 0.25.
+        nms_threshold (float): The IoU threshold used during evaluation when performing NMS for mAP/mAR. Default is 0.5.
+        map_thresholds (optional, List[float]): A list of IoU thresholds used for mAP/mAR calculations.
+                                                If not provided, this defaults to [0.5].
     '''
     num_epochs: int
     accum_steps: int = 1
@@ -389,7 +479,20 @@ class TrainEvalConfigs():
 @dataclass
 class CheckpointConfigs():
     '''
-    Class for setting checkpoint saving and resuming configurations.
+    Data class for setting checkpoint saving and resuming configurations.
+
+    Args:
+        save_dir (optional, str): Directory to save checkpoint every epoch.
+                                  Required if `checkpoint_name` is provided.
+                                  If `save_dir` and `checkpoint_name` are None, checkpoints will not be saved.
+        checkpoint_name (optional, str): File name for the checkpoint. 
+                                         If missing an extension (.pt or .pth), `.pth` will be appended.
+                                         If only `save_dir` is provided, defaults to `checkpoint.pth`.
+        ignore_exists (bool): Whether to ignore existing checkpoint file at `save_dir/checkpoint_name`.
+                              If `False` and a file already exists, training is halted unless `resume = True`.
+        resume_path (optional, str): Full path to a checkpoint file to resume training from.
+                                     If not provided and `resume = True`, defaults to `save_dir/checkpoint_name`.
+        resume (bool): Whether to resume training from a previous checkpoint.
     '''
     save_dir: Optional[str] = None
     checkpoint_name: Optional[str] = None
@@ -416,7 +519,6 @@ class CheckpointConfigs():
             case (None, str()):
                 raise ValueError('`save_dir` must be a specified string if `checkpoint_name` is given.')
                 
-            
         # Check if resuming and if a resume_path needs to be set
         if self.resume and (self.resume_path is None):
             assert self.save_path is not None, (

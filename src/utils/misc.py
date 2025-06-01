@@ -34,12 +34,16 @@ def set_seed(seed: int = 0):
     torch.use_deterministic_algorithms(True)
     os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 
-def calc_grad_norm(model: nn.Module, order: int = 2):
+def calc_grad_norm(model: nn.Module, order: int = 2) -> torch.Tensor:
     '''
     Computes the global gradient norm over all parameters of a model.
 
-    model (nn.Module): A PyTorch model.
-    order (int): The of the norm. Default is 2 for the L2 norm.
+    Args:
+        model (nn.Module): A PyTorch model.
+        order (int): The of the norm. Default is 2 for the L2 norm.
+
+    Returns:
+        torch.Tensor: A scalar tensor with the global gradient norm value.
     '''
     global_norm = 0
     for param in model.parameters():
@@ -61,7 +65,7 @@ def save_checkpoint(model: nn.Module,
                     save_path: Optional[str] = None):
     '''
     Saves a checkpoint containing the model, optimizer, scheduler state dicts,
-    along with training metrics and epoch index.
+    along with training/validation metrics and epoch index.
 
     Args:
         model (nn.Module): Model to save.

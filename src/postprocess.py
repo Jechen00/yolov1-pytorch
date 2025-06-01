@@ -37,23 +37,23 @@ def decode_logits_yolov1(
         If split_output is False:
             - Full postprocessed tensor of shape (batch_size, S, S, B*5 + C),
         Else:
-            - The tuple (bbox_preds, class_probs) with shapes:
+            - The tuple (bbox_preds, label_probs) with shapes:
                 - bbox_preds: (batch_size, S, S, B, 5)
-                - class_probs: (batch_size, S, S, B, C)
+                - label_probs: (batch_size, S, S, B, C)
     '''
     bbox_logits = pred_logits[..., :B*5]
-    class_logits = pred_logits[..., B*5:]
+    label_logits = pred_logits[..., B*5:]
 
     bbox_preds = torch.sigmoid(bbox_logits) # Bbox predictions and confidence should be within [0, 1]
-    class_probs = F.softmax(class_logits, dim = -1) # Class predictions need to be softmaxed to be a proper distribution
+    label_probs = F.softmax(label_logits, dim = -1) # Class predictions need to be softmaxed to be a proper distribution
 
     if not split_output:
-        return torch.cat([bbox_preds, class_probs], dim = -1)
+        return torch.cat([bbox_preds, label_probs], dim = -1)
 
     else:
         bbox_preds = bbox_preds.view(-1, S, S, B, 5)
-        class_probs = class_probs.unsqueeze(3).repeat(1, 1, 1, B, 1)
-        return bbox_preds, class_probs
+        label_probs = label_probs.unsqueeze(3).repeat(1, 1, 1, B, 1)
+        return bbox_preds, label_probs
     
 def decode_targets_yolov1(targs: torch.Tensor, S: int = 7, B: int = 2) -> List[dict]:
     '''
@@ -67,8 +67,9 @@ def decode_targets_yolov1(targs: torch.Tensor, S: int = 7, B: int = 2) -> List[d
                     The keys of each prediction dictionary are named to be compatible with torchmetrics.detection.mean_ap.
                     They are as follows:
                         - boxes (torch.Tensor): The bounding boxes in (x_min, y_min, x_max, y_max) format.
+                                                Coordinates are scaled relative to the full image dimensions.
                                                 Shape is (num_objects, 4).
-                        - labels (torch.Tensor): The class labels for the bounding boxes in `bboxes`.
+                        - labels (torch.Tensor): The class label indices for the bounding boxes in `bboxes`.
                                                  Shape is (num_objects,).
     '''
     
