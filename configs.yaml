@@ -1,0 +1,65 @@
+experiment: yolov1_resnet50        # YOLOv1 model with ResNet50 backbone
+
+
+# Model Configs
+model:
+  # backbone is a PyTorch module and should be set manually in code
+  S: 7
+  B: 2
+  C: 20
+  drop_prob: 0.5
+  include_bn: true
+
+
+# Dataloader Configs
+dataloader:
+  # S and B inherited from model
+  root: ./data
+  batch_size: 32
+  num_workers: 10
+  max_imgs: null
+
+
+# Loss Function Configs
+loss_fn:
+  # S, B, C are inherited from model
+  lambda_coord: 5
+  lambda_noobj: 0.5
+  reduction: mean
+
+
+# SGD ptimizer Configs
+optimizer:
+  lr: 0.0025
+  momentum: 0.9
+  weight_decay: 0.0005
+
+
+# Learning Rate Scheduler Configs
+scheduler:
+  gamma: 0.2
+  milestones: [75, 105]
+  pre_warmup_lrs: [0.001]
+  warmup_epochs: 0              # No warmup
+  last_epoch: -1                # Training from scratch
+
+
+# Training/Evaluation Configs
+train_eval:
+  num_epochs: 135
+  accum_steps: 2                # Effectively doubles batch size to 64
+  clip_grads: false             # No gradient clipping
+  max_norm: 1.0
+  eval_intervals: 5
+  obj_threshold: 0.2
+  nms_threshold: 0.5
+  map_thresholds: [0.5]
+
+
+# Checkpoint Configs
+checkpoint:
+  save_dir: ./saved_checkpoints
+  checkpoint_name: yolov1_checkpoint.pth
+  ignore_exists: false
+  resume_path: null
+  resume: false                # Not resuming -> training from scratch

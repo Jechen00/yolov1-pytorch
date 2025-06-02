@@ -530,7 +530,7 @@ class CheckpointConfigs():
         
         # If not resuming, check if save_path already has an existing file
         elif (not self.resume) and (self.save_path is not None):
-            if os.path.exists(self.save_path) and (not self.ignore_exists):
+            if os.path.isfile(self.save_path) and (not self.ignore_exists):
                 raise FileExistsError(
                     f'A file already exists at `save_path`: {self.save_path}, but `resume = False`. '
                     f'To allow overwriting this file and start training from scratch, set `ignore_exists = True`.'

@@ -5,7 +5,7 @@ import torch
 
 
 #####################################
-# Constants
+# General Constants
 #####################################
 # Setup device and multiprocessing context
 if torch.cuda.is_available():
@@ -25,6 +25,9 @@ BOLD_START = '\033[1m'
 BOLD_END = '\033[0m'
 
 
+#####################################
+# VOC Constants
+#####################################
 VOC_CLASSES = [
     'person', 
     'bird', 'cat', 'cow', 'dog', 'horse', 'sheep',
@@ -58,10 +61,21 @@ VOC_PLOT_DISPLAYS = {
     'tvmonitor': ['TV/Monitor', "#649DE8"]
 }
 
+
+#####################################
+# Loss and Evaluation Constants
+#####################################
 # These are the keys to the output dictionary in `loss.YOLOv1Loss`
 LOSS_KEYS = ['total', 'class', 'local', 'obj_conf', 'noobj_conf']
-LOSS_NAMES = {'total': 'Total',
-              'class': 'Class',
-              'local': 'Local',
-              'obj_conf': 'ObjConf',
-              'noobj_conf': 'NoObjConf'}
+LOSS_NAMES = {
+    'total': 'Total',
+    'class': 'Class',
+    'local': 'Local',
+    'obj_conf': 'ObjConf',
+    'noobj_conf': 'NoObjConf'
+}
+EVAL_NAMES = {
+    'map': 'mAP',
+    'map_50': 'mAP@[IoU=0.50]',
+    'map_75': 'mAP@[IoU=0.75]'
+}

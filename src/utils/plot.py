@@ -14,7 +14,7 @@ from PIL import Image
 from typing import Tuple, Optional, Dict, Callable, Union
 
 from src import evaluate, postprocess
-from src.constants import VOC_PLOT_DISPLAYS, VOC_CLASSES
+from src.constants import VOC_PLOT_DISPLAYS, VOC_CLASSES, LOSS_NAMES, EVAL_NAMES
 
 
 #####################################
@@ -76,15 +76,17 @@ def plot_results(train_losses: Dict[str, list],
         axes = [axes]
     
     # Subplot 1: Losses
-    axes[0].plot(loss_epochs, train_loss, label = f'Train Loss: {loss_key}')
+    loss_name = LOSS_NAMES.get(loss_key, loss_key)
+    axes[0].plot(loss_epochs, train_loss, label = f'Train Loss: {loss_name}')
     if val_losses is not None:
-        axes[0].plot(loss_epochs, val_losses[loss_key], label = f'Val Loss: {loss_key}')
+        axes[0].plot(loss_epochs, val_losses[loss_key], label = f'Val Loss: {loss_name}')
 
     axes[0].set_ylabel('YOLOv1 Loss', fontsize = 24)
 
     # Subplot 2: mAP
+    eval_name = EVAL_NAMES.get(eval_key, eval_key)
     if eval_history:
-        axes[1].plot(eval_epochs, eval_scores, label = f'Val metric: {eval_key}', color = 'red')
+        axes[1].plot(eval_epochs, eval_scores, label = f'Val metric: {eval_name}', color = 'red')
         axes[1].yaxis.set_label_position('right')
         axes[1].yaxis.tick_right()
 

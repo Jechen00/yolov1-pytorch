@@ -146,7 +146,7 @@ def get_dataloaders(root: str,
 
 
 #####################################
-# Classes
+# Transform Classes
 #####################################
 class RandomHSV():
     '''
@@ -188,7 +188,11 @@ class RandomHSV():
 
         img = Image.merge('HSV', (h, s, v))
         return img.convert('RGB'), anno_info
-    
+
+
+#####################################
+# VOC Class
+#####################################
 class VOCDataset(Dataset):
     '''
     The training set combines the trainval data from  Pascal VOC 2007 and 2012. 
@@ -402,7 +406,6 @@ class VOCDataset(Dataset):
                 continue
 
             # Note: After normalizing by image dimensions, the cell width and height are both 1/S
-            # Min needed to prevent index errors when object is at the edge
             grid_i = int(yc * self.S)
             grid_j = int(xc * self.S)
 
