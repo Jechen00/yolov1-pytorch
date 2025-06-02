@@ -48,7 +48,7 @@ if __name__ == '__main__':
 
     # Device will be CUDA or MPS if they are avaliable (Change if needed)
     model = model.to(constants.DEVICE)
-
+    # model = torch.compile(model)
 
     # ---------------------------
     # Dataloader (Pascal VOC)
