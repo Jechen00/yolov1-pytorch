@@ -1,0 +1,6 @@
+# Backbone is ResNet50 and should be set manually in code
+B: 2
+C: 20
+S: 7
+drop_prob: 0.5
+include_bn: true
