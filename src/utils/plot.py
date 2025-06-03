@@ -177,9 +177,9 @@ def draw_bboxes(img: Image.Image,
             
         # Annotate with the class name and class confidence score (if applicable)
         ax.text(txt_x, txt_y, txt,
-                fontsize = 10, color = 'white',
+                fontsize = 11, color = 'k',
                 ha = 'left', va = 'top',
-                bbox = dict(facecolor = clr, alpha = 0.8, pad = 1.8, edgecolor = 'none'))
+                bbox = dict(facecolor = clr, alpha = 1, pad = 2, edgecolor = 'none'))
         
     ax.axis(False)
 
