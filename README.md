@@ -2,7 +2,7 @@
 This project uses the PyTorch framework to implement the architecture and training regime of YOLOv1 — the first widely recognized single-stage model for object detection.
 
 ## Project Overview
-<img src = 'images/yolov1_demo.png' alt = 'YOLOv1 Demo' width = '100%' height = '380'/>
+<img src = 'images/yolov1_demo.png' alt = 'YOLOv1 Demo' width = '100%'/>
 
 The first version of the _You Only Look Once (YOLOv1)_ model was introduced by [Redmon et al. (2016)](#references) as a real-time object detection system that was both faster and more easily optimized than previous detectors, such as _Regional Convolutional Neural Networks (R-CNNs)_. Its improvements stem from a novel single-stage design that predicts the bounding boxes and class labels directly from an image in a single forward pass. Specifically, YOLOv1 splits the input image into a `S×S` grid, where each cell predicts `B` bounding boxes and a probability distribution over `C` classes. The bounding box predictions include coordinates `(x_center, y_center, width, height)` and a confidence score that reflects both object presence and localization accuracy, measured by the _Intersection over Union (IoU)_ with the ground truth. Additionally, note that each cell only produces one class prediction (from the probability distribution) that is shared across all of its `B` bounding boxes. This is an inherent limitation of YOLOv1 that tends to cause it to predict poorly on images with small, nearby objects.
 
@@ -83,7 +83,7 @@ panel serve app.py --port=66
 This will launch the application locally at `http://localhost:66/app`. Be sure to allow access to your webcam when prompted.
 
 ## References
-Redmon, Joseph, et al. “You Only Look Once: Unified, Real-Time Object Detection.” 2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR), June 2016, pp. 779–788, https://doi.org/10.1109/cvpr.2016.91. 
+Redmon, Joseph, et al. “You Only Look Once: Unified, Real-Time Object Detection.” _2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR)_, June 2016, pp. 779–788, https://doi.org/10.1109/cvpr.2016.91. 
 
 Ramesh, Chinmay Polya, et al. "You Only Look Once (YOLO v1) with Pytorch." _HackMD_, 18 June 2021, https://hackmd.io/@Ul0fopwcQUm8m8Qy5V012w/HJ5nq3dcO. 
 
