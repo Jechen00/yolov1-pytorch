@@ -17,7 +17,7 @@ This project implements the YOLOv1 model using the PyTorch framework. Although i
 Lastly, note that the original architecture from [Redmon et al. (2016)](#references) can still be replicated by setting the backbone to a `src.models.DarkNet()` instance and passing `include_bn=False` when initializing the `src.models.YOLOv1()` model.
 
 
-## Recommended Installations Instructions
+## Recommended Installation Instructions
 ### 1) Create a New Python Environment
 This environment should use **Python >= 3.10**.
 ### 2) Clone the `yolov1-pytorch` Repository
