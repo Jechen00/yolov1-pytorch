@@ -372,9 +372,9 @@ def predict_yolov1_from_logits(pred_logits: torch.Tensor,
 
         # pred_bboxes shape: (1, S, S, B, 5)
         # pred_prob_dist shape: (1, S, S, B, C)
-        pred_bboxes, pred_prob_dist = postprocess.decode_logits_yolov1(pred_samp, S, B, split_output = True)
+        pred_bboxes, pred_prob_dist = postprocess.activate_yolov1_logits(pred_samp, S, B, split_output = True)
 
-        pred_bboxes = convert.yolov1_to_corner_format(pred_bboxes, grid_i, grid_j, S)
+        pred_bboxes = postprocess.decode_yolov1_bboxes(pred_bboxes, grid_i, grid_j, S)
 
         # Filter out low predicted confidence scores
         conf_mask = pred_bboxes[..., -1] >= obj_threshold

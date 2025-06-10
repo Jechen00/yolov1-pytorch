@@ -174,7 +174,7 @@ class YOLOv1Loss(nn.Module):
         grid_j = grid_j[None, ..., None].to(device)  # Shape: (1, S, S, 1)
 
         # Shape: (batch_size, S, S, B*5 + C)
-        preds = postprocess.decode_logits_yolov1(pred_logits, self.S, self.B, split_output = False)
+        preds = postprocess.activate_yolov1_logits(pred_logits, self.S, self.B, split_output = False)
 
         # Shape: (batch_size, S, S, B, 5)
         targ_bboxes = targs[..., :self.B*5].clone().view(batch_size, self.S, self.S, self.B, 5)
@@ -183,8 +183,8 @@ class YOLOv1Loss(nn.Module):
         # Convert center (x, y) coordinates from relative offsets within grid cell to relative within the full image
             # Note: coordinates are still normalized to the image width and height
             # Shape: (batch_size, S, S, B, 5)
-        targ_bboxes = convert.yolov1_to_corner_format(targ_bboxes, grid_i, grid_j, self.S)
-        pred_bboxes = convert.yolov1_to_corner_format(pred_bboxes, grid_i, grid_j, self.S)
+        targ_bboxes = postprocess.decode_yolov1_bboxes(targ_bboxes, grid_i, grid_j, self.S)
+        pred_bboxes = postprocess.decode_yolov1_bboxes(pred_bboxes, grid_i, grid_j, self.S)
 
         # Note: this calculates IoUs for all grid cells, not just the ones with objects
             # This wastes computations, but allows for batch vectorization

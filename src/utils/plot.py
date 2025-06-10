@@ -335,9 +335,9 @@ def draw_preds_yolov1(model: nn.Module,
     
     # label_probs shape: (1, S, S, B, C)
         # Note: Per grid cell, class probabilities are the same across the B bboxes
-    _, label_probs = postprocess.decode_logits_yolov1(pred_logits = pred_logits,
-                                                               S = model.S, B = model.B,
-                                                               split_output = True)
+    _, label_probs = postprocess.activate_yolov1_logits(pred_logits = pred_logits,
+                                                        S = model.S, B = model.B,
+                                                        split_output = True)
 
     label_probs = label_probs[0, ..., 0, :] # Shape: (S, S, C)
     pred_probs, pred_labels = label_probs.max(dim = -1) # Shapes are (S, S), (S, S)

@@ -13,7 +13,7 @@ from src.utils import convert
 #####################################
 # Functions
 #####################################
-def decode_logits_yolov1(
+def activate_yolov1_logits(
         pred_logits: torch.Tensor, 
         S: int = 7, 
         B: int = 2, 
@@ -55,6 +55,45 @@ def decode_logits_yolov1(
         label_probs = label_probs.unsqueeze(3).repeat(1, 1, 1, B, 1)
         return bbox_preds, label_probs
     
+def decode_yolov1_bboxes(bboxes: torch.Tensor, 
+                         grid_i: torch.Tensor, 
+                         grid_j: torch.Tensor, 
+                         S: int = 7) -> torch.Tensor:
+    '''
+    Converts bboxes from YOLOv1 format to corner (x_center, y_center, width, height) format.
+    In YOLOv1, each bounding box is predicted in a variation of center format:
+        - (x_center, y_center) are relative to grid cell boundaries.
+        - (width, height) are relative to the full image.
+
+    Args:
+        bboxes (torch.Tensor): The predicted bounding boxes returned by a YOLOv1 model.
+                               The shape is (batch_size, S, S, B, 5), where the last dimension 
+                               is in (x_center, y_center, width, height, confidence) format.
+                               Note that (x_center, y_center) are relative to grid boundaries,
+                               while (width, height) are relative to the full image.
+        grid_i (torch.Tensor): Row indices for each grid cell, used to shift y_center to be relative to the full image.
+                               Shape is (1, S, S, 1).
+        grid_j (torch.Tensor): Column indices for each grid cell, used to shift y_center to be relative to the full image.
+                               Shape is (1, S, S, 1).
+        S (int): Grid size used for normalizing (x_center, y_center). Default is 7.
+
+    Returns:
+        torch.Tensor: Bbox coordinates in corner format, with confidence preserved.
+                      Shape is (batch_size, S, S, B, 5), with
+                      last dimension as (x_min, y_min, x_max, y_max, confidence).
+    '''
+    bboxes[..., 0] = bboxes[..., 0] + grid_j # Converting center_x coordinates
+    bboxes[..., 1] = bboxes[..., 1] + grid_i # Converting center_y coordinates
+    bboxes[..., 0:2] = bboxes[..., 0:2] / S
+
+    # Convert from center format (CXCYWH) to corner format (XYXY) for the bbox coordinates
+        # Shape: (batch_size, S, S, B, 4)
+        # This gets rid of confidence scores
+    corner_bboxes = convert.center_to_corner_format(bboxes)
+
+    # Concatenate back confidence scores to the last dimension
+    return torch.concat([corner_bboxes, bboxes[..., 4:]], dim = -1)
+
 def decode_targets_yolov1(targs: torch.Tensor, S: int = 7, B: int = 2) -> List[dict]:
     '''
     Decodes a batch of YOLOv1 targets into a list of dictionaries containing bounding boxes and labels.
@@ -92,7 +131,7 @@ def decode_targets_yolov1(targs: torch.Tensor, S: int = 7, B: int = 2) -> List[d
         obj_mask = targ_sample[..., 4].bool() # Mask indicating which grid cells have objects
         
         bboxes = targ_sample[..., :B*5].clone().view(1, S, S, B, 5) # Shape: (1, S, S, B, 5)
-        bboxes = convert.yolov1_to_corner_format(bboxes, grid_i, grid_j, S)
+        bboxes = decode_yolov1_bboxes(bboxes, grid_i, grid_j, S)
 
         # Get bboxes in object cells
         # Note: For targets, only the first bbox has meaningful non-zero values for object cells
