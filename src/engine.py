@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import List, Optional, Union, Dict, Tuple
 
-from src import engine, constants, evaluate, postprocess
+from src import constants, evaluate, postprocess
 from src.utils import misc
 
 
@@ -292,12 +292,16 @@ def train(
         train_start = time.time()
 
         # Compute average losses (over batches)
-        train_avgs = engine.yolov1_train_step(model = model, dataloader = train_loader, 
-                                              loss_fn = loss_fn, optimizer = optimizer, 
-                                              accum_steps = te_cfgs.accum_steps, 
-                                              clip_grads = te_cfgs.clip_grads,
-                                              max_norm = te_cfgs.max_norm, 
-                                              device = device)
+        train_avgs = yolov1_train_step(
+            model = model, 
+            dataloader = train_loader, 
+            loss_fn = loss_fn, 
+            optimizer = optimizer, 
+            accum_steps = te_cfgs.accum_steps, 
+            clip_grads = te_cfgs.clip_grads,
+            max_norm = te_cfgs.max_norm, 
+            device = device
+        )
         # Update optimizer learning rates
         scheduler.step()
         
@@ -329,13 +333,16 @@ def train(
 
         # Compute average losses (over batches) and eval metrics
             # eval_res is None if should_eval is False
-        val_avgs, eval_res = yolov1_val_step(model = model, dataloader = val_loader,
-                                             loss_fn = loss_fn,
-                                             should_eval = should_eval,
-                                             obj_threshold = te_cfgs.obj_threshold,
-                                             nms_threshold = te_cfgs.nms_threshold,
-                                             map_thresholds = te_cfgs.map_thresholds,
-                                             device = device)
+        val_avgs, eval_res = yolov1_val_step(
+            model = model, 
+            dataloader = val_loader,
+            loss_fn = loss_fn,
+            should_eval = should_eval,
+            obj_threshold = te_cfgs.obj_threshold,
+            nms_threshold = te_cfgs.nms_threshold,
+            map_thresholds = te_cfgs.map_thresholds,
+            device = device
+        )
         # Store and log each average loss
         val_log = f'{constants.BOLD_START}[EPOCH {epoch:>3} | {"Val Loss":<12}]{constants.BOLD_END} '
         for key in constants.LOSS_KEYS:
