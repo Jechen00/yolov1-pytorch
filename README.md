@@ -49,6 +49,13 @@ pip install torchvision==0.22.0
 # Additionally required for the webcam application
 pip install panel==1.4.5
 ```
+### 4) Download Saved Models
+A pretrained YOLOv1 model that was trained on the Pascal VOC dataset is available in this [Google Drive folder](https://drive.google.com/drive/folders/1W_xlRe6TDpiuCeKbby4LwiF9hompmgO-?usp=drive_link). This will include the model weights and the training results (a `.pkl` file).
+
+To setup:
+  1. Click the Google Drive link and download the entire `saved_models` folder by selecting "**Download all**".
+  2. If the folder downloads as a zip file, unzip it.
+  3. Move the `saved_models` directory into the `yolov1-pytorch` directory.
 
 ## Training Instructions
 The steps explained in this section are for training the YOLOv1 model through the provided Python script `run_training.py`.
